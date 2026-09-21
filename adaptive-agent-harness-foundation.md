@@ -1,0 +1,1584 @@
+# Adaptive Agent Harness: Foundation Architecture and Milestone 1 Plan
+
+Status: implementation-ready product foundation  
+Runtime: Bun + TypeScript  
+Configuration: YAML or TOML  
+Permanent decision engine: TypeSafe Jev  
+Initial workers: OpenAI Codex CLI and Cursor Agent CLI with Composer 2.5
+
+## 1. Product goal
+
+Build a durable, local-first agent harness that accepts a coding objective, uses Jev as its permanent control-plane decision engine, delegates work to Codex or Cursor Composer, runs deterministic verification, and records the complete run as a replayable event stream.
+
+The first user-facing product is a CLI. The CLI is not the harness itself. It is the first client of a reusable runtime that will later support a local daemon, a web interface, multiple repositories, concurrent bots, and remote workers without replacing the core architecture.
+
+Milestone 1 must be useful for real coding work while also producing the evidence needed to tune routing and decision policy. Benchmarking Jev remains important, but Jev is not an optional experiment that will be discarded if an initial benchmark is imperfect. It is a permanent architectural component whose questions, thresholds, and responsibilities will be refined over time.
+
+The long-term product experience is:
+
+> Give the harness an objective, watch specialized agents collaborate, understand why the system made each decision, intervene when necessary, and retain a complete record of cost, context, changes, and verification.
+
+## 2. Core design principles
+
+1. **Bun owns the local runtime.** Use Bun for dependency management, TypeScript execution, tests, process spawning, HTTP requests, and SQLite.
+2. **Configuration owns policy.** Provider selection, prompts, thresholds, limits, and verification commands live in YAML or TOML rather than application code.
+3. **Jev is the permanent decision plane.** It selects among explicit choices and scores narrow properties. It does not generate plans or code. A clearly defined bypass mode exists for outages, debugging, comparison runs, and emergency operation.
+4. **Workers think and edit.** Codex and Composer inspect the repository, implement changes, and return reports.
+5. **Code enforces policy.** TypeScript interprets decisions, applies thresholds, controls retries, and stops runs.
+6. **Deterministic evidence outranks model claims.** Exit codes, test results, lint results, repository status, and diffs are authoritative inputs to completion decisions.
+7. **Every action is observable.** Store events, decisions, worker calls, usage, durations, verification results, and run outcomes.
+8. **Integrations stay replaceable.** Codex, Cursor, persistence, and future Headroom support sit behind interfaces. Jev also sits behind a gateway, but it remains the default and intended decision implementation.
+9. **Safe defaults.** Require a Git repository, default to a clean worktree, set hard step and retry limits, and never place secrets in config files.
+10. **The runtime is the product.** CLI, daemon, and web UI are clients of the same application contracts.
+11. **Events are a protocol, not only logs.** Versioned run events power persistence, terminal streaming, recovery, and the future UI.
+12. **Build a vertical slice, not throwaway code.** Milestone 1 limits scope while preserving the production boundaries and contracts.
+
+## 3. Milestone 1 boundary
+
+### Included
+
+- `harness config validate`
+- `harness run "<objective>"`
+- `harness runs list`
+- `harness runs show <run-id>`
+- YAML and TOML config parsing with the same validated schema
+- Jev REST adapter
+- Codex CLI adapter
+- Cursor Agent CLI adapter
+- A simple state-machine orchestrator
+- Built-in SQLite telemetry through `bun:sqlite`
+- Configured verification commands
+- Human-readable console output and a `--json` mode
+- Unit tests for config, policy, decisions, adapters, and transitions
+- Integration tests with fake provider executables
+- Reusable `HarnessRuntime` application API
+- Versioned command and event protocol
+- Durable pause, resume, cancel, and approval states
+- Decision gateway with Jev and deterministic bypass modes
+- Bun workspace structure that can add a daemon and web UI without moving core code
+
+### Deferred
+
+- Headroom integration
+- Web UI implementation
+- Long-lived daemon implementation
+- Distributed workers
+- Simultaneous editing by multiple workers
+- Automatic branch merging
+- Arbitrary workflow definitions
+- Remote execution
+- Provider billing reconciliation beyond reported usage
+- Autonomous destructive operations
+
+These items are deferred capabilities, not deferred architecture. Milestone 1 must define the boundaries they will use even when their implementations arrive later.
+
+## 4. Permanent product architecture
+
+```mermaid
+flowchart TD
+    CLI["CLI client"] --> Runtime["Harness runtime"]
+    UI["Future web UI"] --> Runtime
+    Daemon["Future local daemon"] --> Runtime
+    Runtime --> Orchestrator["Orchestrator"]
+    Runtime --> Events["Versioned event stream"]
+    Runtime --> Storage["Persistence"]
+    Orchestrator --> Gateway["Decision gateway"]
+    Gateway --> Jev["Jev"]
+    Gateway --> Bypass["Deterministic bypass"]
+    Orchestrator --> Workers["Worker registry"]
+    Orchestrator --> Workspaces["Workspace manager"]
+```
+
+For Milestone 1, the CLI instantiates `HarnessRuntime` in-process:
+
+```text
+CLI -> HarnessRuntime -> SQLite + local worker processes
+```
+
+Later, the CLI and web UI connect to a daemon exposing the same command and event contracts:
+
+```text
+CLI ----+
+        +-> local daemon -> HarnessRuntime
+Web UI -+
+```
+
+No orchestration policy, Jev logic, provider execution, or persistence logic belongs in CLI command handlers or UI components.
+
+## 5. Runtime flow
+
+```mermaid
+flowchart TD
+    A["Objective"] --> B["Load and validate config"]
+    B --> C["Preflight repository and providers"]
+    C --> D["Jev route decision"]
+    D --> E["Run selected worker"]
+    E --> F["Run deterministic verification"]
+    F --> G["Jev completion decision"]
+    G -->|done| H["Finish and report"]
+    G -->|retry| E
+    G -->|review| I["Run reviewer"]
+    G -->|ask-user| J["Pause with reason"]
+    I --> F
+```
+
+Milestone 1 runs one editing worker at a time. That avoids merge coordination and gives clean benchmark data. Research or review can be added as distinct sequential steps, but two workers do not edit the same worktree concurrently.
+
+## 6. Configuration strategy
+
+### Discovery order
+
+1. A path supplied with `--config`.
+2. `harness.yaml`.
+3. `harness.yml`.
+4. `harness.toml`.
+
+If more than one default config file exists, fail and ask for `--config`. Silent precedence would make runs hard to reproduce.
+
+### Configuration rules
+
+- YAML and TOML deserialize into the same object shape.
+- Validate the parsed object with Zod.
+- Reject unknown keys in version 1.
+- Secrets are referenced by environment variable name, never stored directly.
+- Paths are resolved relative to the config file.
+- CLI flags may override run-specific values such as workspace, dry-run, JSON output, and maximum cost.
+- Write the normalized configuration and a SHA-256 digest into the run record.
+- Support only `${ENV_NAME}` interpolation and reject missing variables.
+
+### Canonical YAML example
+
+```yaml
+version: 1
+
+project:
+  name: adaptive-harness
+  workspace: .
+
+storage:
+  database: .harness/harness.sqlite
+
+decision:
+  mode: jev
+  allowBypass: true
+  bypassEnv: HARNESS_DECISION_MODE
+  jev:
+    model: jev-latest
+    baseUrl: https://api.typesafe.ai/v1/systemone
+    apiKeyEnv: TYPESAFE_API_KEY
+    timeoutMs: 15000
+    transientRetries: 2
+  fallback:
+    onUnavailable: deterministic
+    onLowConfidence: ask-user
+
+providers:
+  codex:
+    kind: codex-cli
+    command: codex
+    model: null
+    sandbox: workspace-write
+    extraArgs: []
+
+  composer:
+    kind: cursor-cli
+    command: agent
+    model: composer-2.5
+    outputFormat: stream-json
+    extraArgs: []
+
+agents:
+  implementer:
+    provider: composer
+    purpose: implementation
+    instructions: |
+      Implement only the requested change. Preserve existing conventions.
+      Run focused checks when practical. Do not modify unrelated files.
+
+  reasoner:
+    provider: codex
+    purpose: implementation
+    instructions: |
+      Handle tasks requiring deeper repository analysis or complex debugging.
+      Implement only after understanding the relevant architecture.
+
+  reviewer:
+    provider: codex
+    purpose: review
+    readOnly: true
+    instructions: |
+      Review the objective, diff, and verification evidence independently.
+      Identify correctness issues, regressions, missing tests, and scope creep.
+
+routing:
+  defaultAgent: implementer
+  complexAgent: reasoner
+  reviewerAgent: reviewer
+  complexTaskScore: 3.5
+  requireReviewRiskScore: 3.0
+  autoProceedConfidence: 0.85
+  verifyConfidence: 0.65
+  askUserBelowConfidence: 0.50
+
+limits:
+  maxSteps: 8
+  maxRetriesPerTask: 2
+  maxWorkerCalls: 5
+  maxInputTokens: 1000000
+  maxCostUsd: 10
+  workerTimeoutMs: 1200000
+
+git:
+  requireRepository: true
+  requireClean: true
+  allowUntracked: false
+
+verification:
+  stopOnFailure: false
+  commands:
+    - name: typecheck
+      command: bun
+      args: [run, typecheck]
+      timeoutMs: 120000
+    - name: tests
+      command: bun
+      args: [test]
+      timeoutMs: 300000
+
+telemetry:
+  console: pretty
+  retainRawProviderEvents: true
+  redactEnvironment:
+    - TYPESAFE_API_KEY
+```
+
+### Equivalent TOML excerpt
+
+```toml
+version = 1
+
+[project]
+name = "adaptive-harness"
+workspace = "."
+
+[storage]
+database = ".harness/harness.sqlite"
+
+[decision]
+mode = "jev"
+allowBypass = true
+bypassEnv = "HARNESS_DECISION_MODE"
+
+[decision.jev]
+model = "jev-latest"
+baseUrl = "https://api.typesafe.ai/v1/systemone"
+apiKeyEnv = "TYPESAFE_API_KEY"
+timeoutMs = 15000
+transientRetries = 2
+
+[decision.fallback]
+onUnavailable = "deterministic"
+onLowConfidence = "ask-user"
+
+[providers.codex]
+kind = "codex-cli"
+command = "codex"
+sandbox = "workspace-write"
+extraArgs = []
+
+[providers.composer]
+kind = "cursor-cli"
+command = "agent"
+model = "composer-2.5"
+outputFormat = "stream-json"
+extraArgs = []
+
+[agents.implementer]
+provider = "composer"
+purpose = "implementation"
+instructions = """
+Implement only the requested change. Preserve existing conventions.
+Run focused checks when practical. Do not modify unrelated files.
+"""
+
+[routing]
+defaultAgent = "implementer"
+complexAgent = "reasoner"
+reviewerAgent = "reviewer"
+complexTaskScore = 3.5
+requireReviewRiskScore = 3.0
+autoProceedConfidence = 0.85
+verifyConfidence = 0.65
+askUserBelowConfidence = 0.50
+
+[limits]
+maxSteps = 8
+maxRetriesPerTask = 2
+maxWorkerCalls = 5
+maxInputTokens = 1000000
+maxCostUsd = 10.0
+workerTimeoutMs = 1200000
+
+[[verification.commands]]
+name = "tests"
+command = "bun"
+args = ["test"]
+timeoutMs = 300000
+```
+
+## 7. Product repository layout
+
+```text
+adaptive-harness/
+├── package.json
+├── bun.lock
+├── tsconfig.json
+├── biome.json
+├── harness.example.yaml
+├── harness.example.toml
+├── README.md
+├── apps/
+│   ├── cli/
+│   │   ├── package.json
+│   │   ├── src/cli.ts
+│   │   └── test/
+│   ├── daemon/                 # contract placeholder in M1, implementation in M3
+│   └── web/                    # added after the daemon protocol is stable
+├── packages/
+│   ├── core/
+│   │   ├── src/types.ts
+│   │   ├── src/state-machine.ts
+│   │   ├── src/policy.ts
+│   │   └── test/
+│   ├── protocol/
+│   │   ├── src/commands.ts
+│   │   ├── src/events.ts
+│   │   ├── src/runtime.ts
+│   │   └── test/
+│   ├── config/
+│   │   ├── src/loader.ts
+│   │   ├── src/schema.ts
+│   │   ├── src/interpolation.ts
+│   │   └── test/
+│   ├── runtime/
+│   │   ├── src/orchestrator.ts
+│   │   ├── src/run-controller.ts
+│   │   ├── src/prompts.ts
+│   │   ├── src/recovery.ts
+│   │   └── test/
+│   ├── decisions/
+│   │   ├── src/gateway.ts
+│   │   ├── src/jev-client.ts
+│   │   ├── src/deterministic.ts
+│   │   ├── src/questions.ts
+│   │   └── test/
+│   ├── workers/
+│   │   ├── src/registry.ts
+│   │   ├── src/codex-cli.ts
+│   │   ├── src/cursor-cli.ts
+│   │   ├── src/jsonl.ts
+│   │   └── test/
+│   ├── workspace/
+│   │   ├── src/git.ts
+│   │   ├── src/manager.ts
+│   │   └── test/
+│   ├── verification/
+│   │   ├── src/runner.ts
+│   │   └── test/
+│   ├── persistence/
+│   │   ├── src/contracts.ts
+│   │   ├── src/sqlite.ts
+│   │   ├── src/migrations.ts
+│   │   └── test/
+│   └── telemetry/
+│       ├── src/reporter.ts
+│       ├── src/redaction.ts
+│       └── test/
+└── test/
+    ├── fixtures/
+    ├── fakes/
+    ├── integration/
+    └── live/
+```
+
+The workspace boundaries are part of the product design. Composer should not collapse these packages into one `src` directory for convenience.
+
+## 8. Root `package.json`
+
+The package is private during Milestone 1. Bun supplies `fetch`, `Bun.spawn`, `bun:test`, UUID generation, and SQLite, so the dependency list stays deliberately small.
+
+```json
+{
+  "name": "@adaptive-harness/root",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Jev-directed agent harness for Codex, Cursor, and future worker providers",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun --filter @adaptive-harness/cli dev",
+    "build": "bun run --filter '*' build",
+    "compile": "bun --filter @adaptive-harness/cli compile",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "check": "bunx biome check .",
+    "check:fix": "bunx biome check --write .",
+    "validate": "bun run typecheck && bun run check && bun test && bun run build"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@types/bun": "^1.2.22",
+    "typescript": "^5.9.2"
+  }
+}
+```
+
+Each workspace owns its runtime dependencies. The CLI package owns Commander. The config package owns Zod, YAML, and TOML parsing. Packages depend on one another through workspace references such as `"@adaptive-harness/core": "workspace:*"`.
+
+Before the initial commit, install with `bun install`, run `bun update`, inspect the resolved versions, and commit `bun.lock`. The lockfile, not the ranges above, becomes the reproducibility boundary.
+
+## 9. Core TypeScript types
+
+Create `packages/core/src/types.ts` with the domain contracts below. Configuration schemas belong in `packages/config/src/schema.ts`; this file contains runtime concepts and adapter boundaries.
+
+```ts
+export type RunId = string;
+export type TaskId = string;
+export type WorkerCallId = string;
+export type DecisionId = string;
+
+export type TaskKind = "implementation" | "debugging" | "architecture" | "research" | "review";
+
+export type RunStatus =
+  "created" | "routing" | "running" | "verifying" | "reviewing" | "paused" | "completed" | "failed" | "cancelled";
+
+export type NextAction = "done" | "retry" | "verify" | "review" | "research" | "ask-user" | "fail";
+
+export type AgentPurpose = "implementation" | "research" | "review";
+
+export interface Objective {
+  text: string;
+  acceptanceCriteria: string[];
+  suppliedContext?: string;
+}
+
+export interface HarnessTask {
+  id: TaskId;
+  runId: RunId;
+  parentTaskId?: TaskId;
+  kind: TaskKind;
+  objective: Objective;
+  attempt: number;
+  assignedAgent?: string;
+  status: "pending" | "running" | "completed" | "failed" | "paused";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Usage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
+}
+
+export interface FileChange {
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "unknown";
+  additions?: number;
+  deletions?: number;
+}
+
+export interface WorkerRequest {
+  runId: RunId;
+  task: HarnessTask;
+  agentName: string;
+  instructions: string;
+  workspace: string;
+  model?: string;
+  readOnly: boolean;
+  timeoutMs: number;
+  environment: Record<string, string>;
+}
+
+export interface WorkerReport {
+  summary: string;
+  completed: boolean;
+  filesChanged: FileChange[];
+  checksRun: string[];
+  concerns: string[];
+  requestedHelp?: string;
+}
+
+export interface WorkerResult {
+  id: WorkerCallId;
+  provider: string;
+  status: "succeeded" | "failed" | "timed-out" | "cancelled";
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  exitCode: number | null;
+  sessionId?: string;
+  report?: WorkerReport;
+  finalOutput: string;
+  usage: Usage;
+  rawEventCount: number;
+  error?: string;
+}
+
+export interface WorkerAdapter {
+  readonly kind: "codex-cli" | "cursor-cli";
+
+  preflight(): Promise<ProviderPreflight>;
+
+  execute(request: WorkerRequest, emit: (event: WorkerStreamEvent) => void | Promise<void>): Promise<WorkerResult>;
+
+  cancel(callId: WorkerCallId): Promise<void>;
+}
+
+export interface ProviderPreflight {
+  ok: boolean;
+  version?: string;
+  authenticated?: boolean;
+  details: string[];
+}
+
+export type WorkerStreamEvent =
+  | { type: "session.started"; sessionId?: string; at: string }
+  | { type: "message"; role: "assistant" | "system"; text: string; at: string }
+  | { type: "tool.started"; name: string; callId?: string; at: string }
+  | { type: "tool.completed"; name: string; callId?: string; ok: boolean; at: string }
+  | { type: "usage"; usage: Usage; at: string }
+  | { type: "provider.raw"; value: unknown; at: string };
+
+export type DecisionQuestion =
+  | {
+      type: "choice";
+      instructions: string;
+      criteria: Record<string, string>;
+    }
+  | {
+      type: "score";
+      instructions: string;
+      criteria: string[];
+    }
+  | {
+      type: "noul";
+      instructions: string;
+    };
+
+export type DecisionAnswer =
+  | {
+      type: "choice";
+      choice: string;
+      confidence: number;
+      probabilities: Record<string, number>;
+    }
+  | {
+      type: "score";
+      score: number;
+      confidence: number;
+      probabilities: Record<string, number>;
+      legend?: Record<string, string>;
+    }
+  | {
+      type: "noul";
+      noul: number;
+    };
+
+export interface DecisionRequest {
+  state: string;
+  questions: Record<string, DecisionQuestion>;
+}
+
+export interface DecisionResponse {
+  id: DecisionId;
+  model: string;
+  answers: Record<string, DecisionAnswer>;
+  usage: Usage;
+  durationMs: number;
+  raw: unknown;
+}
+
+export interface DecisionProvider {
+  readonly kind: "jev" | "deterministic";
+  preflight(): Promise<ProviderPreflight>;
+  evaluate(request: DecisionRequest): Promise<DecisionResponse>;
+}
+
+export interface RouteDecision {
+  taskKind: TaskKind;
+  taskKindConfidence: number;
+  complexityScore: number;
+  complexityConfidence: number;
+  needsExternalResearch: number;
+  requirementsClear: number;
+  selectedAgent: string;
+  reasonCodes: string[];
+}
+
+export interface CompletionDecision {
+  requirementsSatisfied: number;
+  implementationRiskScore: number;
+  implementationRiskConfidence: number;
+  moreWorkUseful: number;
+  needsIndependentReview: number;
+  nextAction: NextAction;
+  nextActionConfidence: number;
+  reasonCodes: string[];
+}
+
+export interface VerificationCommandResult {
+  name: string;
+  command: string;
+  args: string[];
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface VerificationResult {
+  ok: boolean;
+  commands: VerificationCommandResult[];
+  gitDiffStat: string;
+  filesChanged: FileChange[];
+}
+
+export interface RunBudget {
+  workerCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+  elapsedMs: number;
+}
+
+export interface HarnessRun {
+  id: RunId;
+  status: RunStatus;
+  objective: Objective;
+  workspace: string;
+  configPath: string;
+  configHash: string;
+  currentTaskId?: TaskId;
+  currentStep: number;
+  budget: RunBudget;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  failureReason?: string;
+}
+
+export type HarnessEvent =
+  | { type: "run.created"; run: HarnessRun }
+  | { type: "run.status-changed"; runId: RunId; from: RunStatus; to: RunStatus }
+  | { type: "decision.requested"; runId: RunId; phase: "route" | "completion" | "handoff" | "context" }
+  | { type: "decision.completed"; runId: RunId; decision: DecisionResponse }
+  | { type: "decision.bypassed"; runId: RunId; reason: string }
+  | { type: "worker.started"; runId: RunId; taskId: TaskId; callId: WorkerCallId }
+  | { type: "worker.event"; runId: RunId; callId: WorkerCallId; event: WorkerStreamEvent }
+  | { type: "worker.completed"; runId: RunId; taskId: TaskId; result: WorkerResult }
+  | { type: "verification.completed"; runId: RunId; result: VerificationResult }
+  | { type: "policy.action"; runId: RunId; action: NextAction; reasonCodes: string[] }
+  | { type: "approval.requested"; request: ApprovalRequest }
+  | { type: "approval.answered"; request: ApprovalRequest }
+  | { type: "run.paused"; runId: RunId; reason: string }
+  | { type: "run.resumed"; runId: RunId }
+  | { type: "run.cancelled"; runId: RunId; reason?: string }
+  | { type: "run.completed"; run: HarnessRun }
+  | { type: "run.failed"; run: HarnessRun; error: string };
+
+export interface EventSink {
+  append(event: EventEnvelope): Promise<void>;
+}
+
+export interface EventEnvelope<T extends HarnessEvent = HarnessEvent> {
+  id: string;
+  version: 1;
+  sequence: number;
+  runId: RunId;
+  occurredAt: string;
+  correlationId: string;
+  causationId?: string;
+  payload: T;
+}
+
+export interface CreateRunInput {
+  objective: Objective;
+  workspace: string;
+  configPath: string;
+  idempotencyKey?: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  runId: RunId;
+  taskId?: TaskId;
+  kind: "clarification" | "permission" | "risk-acceptance";
+  prompt: string;
+  choices?: string[];
+  status: "pending" | "answered" | "cancelled";
+  answer?: string;
+  createdAt: string;
+  answeredAt?: string;
+}
+
+export interface HarnessRuntime {
+  createRun(input: CreateRunInput): Promise<HarnessRun>;
+  startRun(runId: RunId): Promise<void>;
+  pauseRun(runId: RunId): Promise<void>;
+  resumeRun(runId: RunId): Promise<void>;
+  cancelRun(runId: RunId): Promise<void>;
+  answerApproval(requestId: string, answer: string): Promise<void>;
+  getRun(runId: RunId): Promise<HarnessRun>;
+  listRuns(options?: { limit?: number; status?: RunStatus }): Promise<HarnessRun[]>;
+  subscribe(runId: RunId, afterSequence?: number): AsyncIterable<EventEnvelope>;
+}
+```
+
+`HarnessRuntime` is the primary application boundary. CLI commands call this interface. The future daemon implements the same interface over HTTP and streams the same event envelopes to CLI and web clients.
+
+## 10. Configuration schema types
+
+Use discriminated Zod schemas so provider-specific fields remain strongly typed.
+
+```ts
+import { z } from "zod";
+
+const CodexProviderSchema = z
+  .object({
+    kind: z.literal("codex-cli"),
+    command: z.string().min(1).default("codex"),
+    model: z.string().min(1).nullable().optional(),
+    sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
+    extraArgs: z.array(z.string()).default([]),
+  })
+  .strict();
+
+const CursorProviderSchema = z
+  .object({
+    kind: z.literal("cursor-cli"),
+    command: z.string().min(1).default("agent"),
+    model: z.string().min(1).nullable().optional(),
+    outputFormat: z.enum(["json", "stream-json", "text"]).default("stream-json"),
+    extraArgs: z.array(z.string()).default([]),
+  })
+  .strict();
+
+const ProviderSchema = z.discriminatedUnion("kind", [CodexProviderSchema, CursorProviderSchema]);
+
+const VerificationCommandSchema = z
+  .object({
+    name: z.string().min(1),
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    timeoutMs: z.number().int().positive().default(300_000),
+    env: z.record(z.string(), z.string()).default({}),
+  })
+  .strict();
+
+export const HarnessConfigSchema = z
+  .object({
+    version: z.literal(1),
+    project: z
+      .object({
+        name: z.string().min(1),
+        workspace: z.string().min(1).default("."),
+      })
+      .strict(),
+    storage: z.object({ database: z.string().min(1).default(".harness/harness.sqlite") }).strict(),
+    decision: z
+      .object({
+        mode: z.enum(["jev", "deterministic"]).default("jev"),
+        allowBypass: z.boolean().default(true),
+        bypassEnv: z.string().min(1).default("HARNESS_DECISION_MODE"),
+        jev: z
+          .object({
+            model: z.string().min(1).default("jev-latest"),
+            baseUrl: z.url().default("https://api.typesafe.ai/v1/systemone"),
+            apiKeyEnv: z.string().min(1).default("TYPESAFE_API_KEY"),
+            timeoutMs: z.number().int().positive().default(15_000),
+            transientRetries: z.number().int().min(0).max(5).default(2),
+          })
+          .strict(),
+        fallback: z
+          .object({
+            onUnavailable: z.enum(["deterministic", "ask-user", "fail"]),
+            onLowConfidence: z.enum(["deterministic", "ask-user", "fail"]),
+          })
+          .strict(),
+      })
+      .strict(),
+    providers: z.record(z.string(), ProviderSchema),
+    agents: z.record(
+      z.string(),
+      z
+        .object({
+          provider: z.string().min(1),
+          purpose: z.enum(["implementation", "research", "review"]),
+          instructions: z.string().min(1),
+          readOnly: z.boolean().default(false),
+        })
+        .strict(),
+    ),
+    routing: z
+      .object({
+        defaultAgent: z.string().min(1),
+        complexAgent: z.string().min(1),
+        reviewerAgent: z.string().min(1),
+        complexTaskScore: z.number().min(0).max(4).default(3),
+        requireReviewRiskScore: z.number().min(0).max(4).default(3),
+        autoProceedConfidence: z.number().min(0).max(1).default(0.85),
+        verifyConfidence: z.number().min(0).max(1).default(0.65),
+        askUserBelowConfidence: z.number().min(0).max(1).default(0.5),
+      })
+      .strict(),
+    limits: z
+      .object({
+        maxSteps: z.number().int().positive().default(8),
+        maxRetriesPerTask: z.number().int().nonnegative().default(2),
+        maxWorkerCalls: z.number().int().positive().default(5),
+        maxInputTokens: z.number().int().positive().default(1_000_000),
+        maxCostUsd: z.number().positive().default(10),
+        workerTimeoutMs: z.number().int().positive().default(1_200_000),
+      })
+      .strict(),
+    git: z
+      .object({
+        requireRepository: z.boolean().default(true),
+        requireClean: z.boolean().default(true),
+        allowUntracked: z.boolean().default(false),
+      })
+      .strict(),
+    verification: z
+      .object({
+        stopOnFailure: z.boolean().default(false),
+        commands: z.array(VerificationCommandSchema).default([]),
+      })
+      .strict(),
+    telemetry: z
+      .object({
+        console: z.enum(["pretty", "json", "silent"]).default("pretty"),
+        retainRawProviderEvents: z.boolean().default(true),
+        redactEnvironment: z.array(z.string()).default([]),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((config, context) => {
+    for (const [agentName, agent] of Object.entries(config.agents)) {
+      if (!config.providers[agent.provider]) {
+        context.addIssue({
+          code: "custom",
+          path: ["agents", agentName, "provider"],
+          message: `Unknown provider: ${agent.provider}`,
+        });
+      }
+    }
+
+    for (const name of [config.routing.defaultAgent, config.routing.complexAgent, config.routing.reviewerAgent]) {
+      if (!config.agents[name]) {
+        context.addIssue({
+          code: "custom",
+          path: ["routing"],
+          message: `Unknown routed agent: ${name}`,
+        });
+      }
+    }
+  });
+
+export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
+export type ProviderConfig = z.infer<typeof ProviderSchema>;
+```
+
+The score criteria in this design use five entries indexed `0` through `4`, so routing thresholds must also remain in the `0..4` range.
+
+## 11. Jev decision plane and gateway
+
+Jev is a permanent part of the harness. The gateway exists to centralize resilience and policy, not to make Jev disposable.
+
+Normal production flow:
+
+```text
+Orchestrator -> DecisionGateway -> Jev -> typed decision -> policy
+```
+
+Bypass flow for outages, debugging, and controlled comparisons:
+
+```text
+Orchestrator -> DecisionGateway -> deterministic rules -> policy
+```
+
+The default is always Jev. Bypass must be explicit through one of these mechanisms:
+
+```bash
+harness run "<objective>" --decision-mode deterministic
+HARNESS_DECISION_MODE=deterministic harness run "<objective>"
+```
+
+The CLI override is allowed only when `decision.allowBypass` is true. Every bypass must emit a `decision.bypassed` event with a reason. Silent fallback is prohibited.
+
+```ts
+export type DecisionMode = "jev" | "deterministic";
+
+export interface DecisionContext {
+  runId: RunId;
+  phase: "route" | "completion" | "handoff" | "context";
+  mode: DecisionMode;
+  reason?: string;
+}
+
+export interface DecisionGateway {
+  evaluate(context: DecisionContext, request: DecisionRequest): Promise<DecisionResponse>;
+}
+```
+
+The deterministic implementation is deliberately conservative. It may route known simple tasks, stop on failed verification, request review for configured high-risk file patterns, and ask the user when uncertain. It must not attempt to imitate Jev with a growing pile of hidden heuristics.
+
+### Jev question design
+
+Jev receives one state string and several atomic questions. Questions are evaluated independently, so do not make one question depend on another answer.
+
+### Initial routing questions
+
+```ts
+export const routeQuestions = {
+  task_kind: {
+    type: "choice",
+    instructions: "Classify the primary kind of work required by the objective",
+    criteria: {
+      implementation: "A bounded code change with sufficiently clear requirements",
+      debugging: "The cause of incorrect behavior must be identified and fixed",
+      architecture: "The task requires consequential system design before implementation",
+      research: "The task primarily requires gathering information",
+      review: "The task primarily requires evaluating an existing change",
+    },
+  },
+  complexity: {
+    type: "score",
+    instructions: "Score the engineering complexity of completing this objective",
+    criteria: [
+      "Trivial and localized",
+      "Small and well understood",
+      "Moderate with several interacting concerns",
+      "Complex and cross-cutting",
+      "Highly complex or architecturally consequential",
+    ],
+  },
+  requirements_clear: {
+    type: "noul",
+    instructions: "The objective is clear enough for an agent to begin safely",
+  },
+  external_research_needed: {
+    type: "noul",
+    instructions: "Completing the objective requires information not likely present in the repository",
+  },
+} as const;
+```
+
+Code chooses the agent from `task_kind`, `complexity`, confidence, and config policy. Do not ask Jev to return an arbitrary provider name. That would couple the decision model to deploy-time configuration.
+
+### Completion questions
+
+```ts
+export const completionQuestions = {
+  requirements_satisfied: {
+    type: "noul",
+    instructions: "The current repository changes satisfy the stated objective and acceptance criteria",
+  },
+  implementation_risk: {
+    type: "score",
+    instructions: "Score the risk of merging the current changes",
+    criteria: ["Trivial risk", "Low risk", "Moderate risk", "High risk", "Critical risk"],
+  },
+  more_work_useful: {
+    type: "noul",
+    instructions: "Another implementation attempt is likely to materially improve the result",
+  },
+  independent_review_needed: {
+    type: "noul",
+    instructions: "The current change warrants an independent agent review before completion",
+  },
+  next_action: {
+    type: "choice",
+    instructions: "Choose the most appropriate immediate next action",
+    criteria: {
+      done: "The objective is satisfied and evidence is adequate",
+      retry: "Implementation needs another attempt",
+      verify: "More deterministic verification is needed",
+      review: "An independent review is needed",
+      research: "Missing information blocks reliable completion",
+      ask_user: "A human decision or clarification is required",
+      fail: "The run cannot make useful progress within its constraints",
+    },
+  },
+} as const;
+```
+
+### State construction
+
+Keep the state factual and compact:
+
+```text
+OBJECTIVE
+<objective and acceptance criteria>
+
+WORKER RESULT
+<structured worker report>
+
+REPOSITORY EVIDENCE
+<git status, diff stat, bounded diff summary>
+
+VERIFICATION
+<command names, exit codes, durations, bounded stderr/stdout tails>
+
+RUN LIMITS
+<attempts, remaining worker calls, remaining token and cost budget>
+```
+
+Never send unrestricted build logs or a full repository diff to Jev. Cap each evidence section and persist the full data separately.
+
+## 12. Worker adapter behavior
+
+### Codex
+
+Use a non-interactive execution similar to:
+
+```text
+codex exec \
+  --json \
+  --sandbox workspace-write \
+  --cd <workspace> \
+  --output-schema <temporary-worker-report-schema.json> \
+  -
+```
+
+Pipe the composed prompt through stdin. Add `--model` only when the config explicitly sets a model. Parse JSONL defensively and preserve unknown event fields as raw events.
+
+For the read-only reviewer, use `--sandbox read-only` and instruct it to return findings without modifying files.
+
+### Cursor Composer
+
+Use a non-interactive execution similar to:
+
+```text
+agent \
+  --print \
+  --output-format stream-json \
+  --workspace <workspace> \
+  --model composer-2.5 \
+  "<prompt>"
+```
+
+Cursor's stream JSON format should be parsed one line at a time. Consumers must ignore unknown fields because the format permits backward-compatible additions.
+
+Cursor non-interactive mode has write access. The harness must enforce clean-worktree checks, limits, and post-run diff inspection rather than assuming the worker CLI will provide the same sandbox boundary as Codex.
+
+For both providers:
+
+- Use `Bun.spawn` with an argument array. Never construct a shell command string.
+- Pipe stdout and stderr separately.
+- Abort with `AbortController` and kill the process tree on timeout.
+- Capture provider version during preflight.
+- Redact configured environment variables from persisted events.
+- Treat the worker's self-reported completion as evidence, not truth.
+- Compute changed files from Git after the process exits.
+
+## 13. Policy logic
+
+Keep policy deterministic and unit-testable.
+
+```ts
+export function selectInitialAgent(route: RouteDecision, config: HarnessConfig): string | NextAction {
+  if (route.requirementsClear < config.routing.askUserBelowConfidence) {
+    return "ask-user";
+  }
+
+  if (route.taskKind === "architecture" || route.complexityScore >= config.routing.complexTaskScore) {
+    return config.routing.complexAgent;
+  }
+
+  return config.routing.defaultAgent;
+}
+
+export function selectNextAction(
+  decision: CompletionDecision,
+  verification: VerificationResult,
+  run: HarnessRun,
+  config: HarnessConfig,
+): NextAction {
+  if (run.currentStep >= config.limits.maxSteps) return "fail";
+  if (run.budget.workerCalls >= config.limits.maxWorkerCalls) return "fail";
+  if (run.budget.inputTokens >= config.limits.maxInputTokens) return "fail";
+  if (run.budget.estimatedCostUsd >= config.limits.maxCostUsd) return "fail";
+
+  if (!verification.ok && decision.moreWorkUseful >= 0.65) return "retry";
+
+  if (
+    decision.implementationRiskScore >= config.routing.requireReviewRiskScore ||
+    decision.needsIndependentReview >= config.routing.autoProceedConfidence
+  ) {
+    return "review";
+  }
+
+  if (decision.nextActionConfidence < config.routing.askUserBelowConfidence) {
+    return "ask-user";
+  }
+
+  if (
+    decision.requirementsSatisfied >= config.routing.autoProceedConfidence &&
+    verification.ok &&
+    decision.moreWorkUseful < 0.35
+  ) {
+    return "done";
+  }
+
+  return decision.nextAction;
+}
+```
+
+Add loop guards so the same action cannot repeat indefinitely. For example, a review may happen once per implementation attempt unless new edits are made.
+
+## 14. SQLite telemetry
+
+Use `bun:sqlite` and enable WAL mode. Start with these tables:
+
+| Table               | Purpose                                                        |
+| ------------------- | -------------------------------------------------------------- |
+| `runs`              | Objective, status, config hash, workspace, timestamps, outcome |
+| `tasks`             | Task tree, attempts, assignments, and status                   |
+| `events`            | Ordered append-only run timeline                               |
+| `decisions`         | Jev request state hash, questions, answers, usage, and latency |
+| `worker_calls`      | Provider, model, session, status, duration, usage, and result  |
+| `worker_events`     | Parsed or raw provider stream events                           |
+| `verification_runs` | Command, arguments, exit code, bounded output, and duration    |
+| `file_changes`      | Changed paths and diff statistics per step                     |
+
+Store large raw payloads as JSON text initially. For the local-first implementation, operational simplicity matters more than fully normalized analytics.
+
+Important indexes:
+
+- `events(run_id, sequence)`
+- `tasks(run_id, created_at)`
+- `decisions(run_id, created_at)`
+- `worker_calls(run_id, created_at)`
+
+## 15. CLI contract
+
+```text
+harness config validate [--config path]
+harness run <objective> [--config path] [--workspace path] [--decision-mode jev|deterministic] [--dry-run] [--json]
+harness runs list [--limit number] [--json]
+harness runs show <run-id> [--events] [--json]
+harness runs watch <run-id> [--after sequence]
+harness pause <run-id>
+harness resume <run-id>
+harness cancel <run-id>
+harness approvals answer <request-id> <answer>
+harness agents list [--json]
+harness providers doctor [--json]
+```
+
+Example:
+
+```bash
+export TYPESAFE_API_KEY="..."
+bun run src/cli.ts config validate --config harness.yaml
+bun run src/cli.ts run "Add cursor pagination to the users endpoint" \
+  --config harness.yaml \
+  --workspace ../target-repository
+```
+
+`--dry-run` performs config validation, provider preflight, Git checks, and the Jev route decision, but does not invoke a writing worker. `--decision-mode deterministic` is an explicit emergency or comparison override and must be recorded in the event stream.
+
+## 16. Implementation milestones
+
+### Milestone 1.0: Workspace bootstrap
+
+1. Create the Bun workspace and package boundaries shown above.
+2. Add root and workspace package manifests, TypeScript config, Biome config, and `.gitignore`.
+3. Add YAML and TOML example configs.
+4. Establish `bun run validate` as the local quality gate.
+
+Exit criteria:
+
+- `bun install` succeeds.
+- `bun run typecheck`, `bun test`, `bun run check`, and `bun run build` succeed.
+
+### Milestone 1.1: Protocol, configuration, and CLI shell
+
+1. Implement discovery and explicit `--config` handling.
+2. Parse YAML with `yaml` and TOML with `smol-toml`.
+3. Interpolate approved environment syntax.
+4. Validate with strict Zod schemas.
+5. Resolve paths relative to the config file.
+6. Add `config validate` and useful path-specific error messages.
+
+Exit criteria:
+
+- Equivalent YAML and TOML fixtures normalize to the same object.
+- Unknown keys, missing secrets, invalid references, and multiple default files fail clearly.
+
+### Milestone 1.2: Persistence and versioned event protocol
+
+1. Create SQLite migrations with `bun:sqlite`.
+2. Implement the append-only event sink.
+3. Add run, task, decision, and worker-call repositories.
+4. Add `runs list` and `runs show`.
+
+Exit criteria:
+
+- A synthetic run can be created, updated, queried, and rendered.
+- Event order remains stable across process restarts.
+
+### Milestone 1.3: Permanent Jev decision plane
+
+1. Implement the `DecisionGateway` and `POST /v1/systemone` with Bun's `fetch`.
+2. Add timeout, retry only for safe transient failures, and response validation.
+3. Build initial route and completion question sets.
+4. Normalize Jev responses into domain decisions.
+5. Implement the conservative deterministic bypass and explicit bypass events.
+6. Record exact model, usage, latency, raw response, selected mode, and fallback reason.
+
+Exit criteria:
+
+- Contract tests pass against recorded fixtures.
+- A live smoke test is opt-in and requires `TYPESAFE_API_KEY`.
+
+### Milestone 1.4: Worker adapters
+
+1. Build a reusable Bun process runner.
+2. Implement JSONL parsing with bounded buffers.
+3. Implement Codex preflight and execution.
+4. Implement Cursor preflight and execution.
+5. Normalize provider events and final results.
+6. Add fake executable fixtures to test timeouts, invalid JSON, nonzero exits, and cancellation.
+
+Exit criteria:
+
+- Both adapters run a read-only task against a fixture repository.
+- Timeouts and process failures become typed results rather than unhandled errors.
+
+### Milestone 1.5: Workspace management, verification, and Git evidence
+
+1. Implement repository preflight.
+2. Enforce clean-worktree policy.
+3. Capture before and after Git state.
+4. Execute configured verification commands without a shell.
+5. Bound output stored in decision state while retaining full output in telemetry when configured.
+
+Exit criteria:
+
+- Verification accurately reports mixed passing and failing commands.
+- Existing user changes cannot be silently attributed to the worker.
+
+### Milestone 1.6: Recoverable runtime and orchestrator
+
+1. Implement explicit state transitions.
+2. Route the initial objective.
+3. Select and execute one worker.
+4. Verify the repository.
+5. Request completion decisions.
+6. Apply deterministic policy and budgets.
+7. Support done, retry, review, ask-user, and fail outcomes.
+8. Implement pause, resume, cancel, approval response, and startup recovery.
+9. Expose all operations through `HarnessRuntime` rather than CLI-specific functions.
+
+Exit criteria:
+
+- End-to-end tests cover every terminal state.
+- Step, retry, worker-call, token, time, and cost limits always stop the run.
+
+### Milestone 1.7: Benchmark and evaluation suite
+
+1. Define 10 to 20 small coding tasks across fixture repositories.
+2. Run each task in baseline and Jev-routed modes.
+3. Record tests passed, human intervention, calls, tokens, time, and estimated cost.
+4. Review incorrect routing and threshold behavior manually.
+
+Exit criteria:
+
+- Results can answer whether routing reduced expensive calls without lowering correctness.
+- Threshold changes are config-only and do not require code edits.
+
+## 17. Testing strategy
+
+### Unit tests
+
+- YAML/TOML equivalence
+- Config reference validation
+- Environment interpolation and secret redaction
+- Jev response normalization
+- Policy thresholds and budget guards
+- State-machine transition legality
+- JSONL parsing and unknown-event tolerance
+- Prompt construction and evidence size caps
+
+### Integration tests
+
+- Fake Jev HTTP server
+- Fake `codex` and `agent` executables placed first on `PATH`
+- Temporary Git repositories
+- Passing and failing verification commands
+- Process timeout and cancellation
+- SQLite restart and event replay
+
+### Live smoke tests
+
+Keep live tests behind explicit environment flags:
+
+```bash
+RUN_LIVE_JEV=1 bun test test/live/jev.test.ts
+RUN_LIVE_CODEX=1 bun test test/live/codex.test.ts
+RUN_LIVE_CURSOR=1 bun test test/live/cursor.test.ts
+```
+
+Do not run paid or account-backed tests in the default suite.
+
+## 18. Safety requirements
+
+- Never pass the objective through a shell.
+- Never support `danger-full-access` without an explicit config value and a prominent warning.
+- Never persist API key values.
+- Require user confirmation before any future destructive workflow such as deleting branches or resetting files.
+- Default to a clean Git worktree during Milestone 1.
+- Stop if the repository changes outside the active worker process.
+- Cap all retained stdout, stderr, raw provider events, and Jev state sections.
+- Store hashes for large omitted values so evidence can be correlated later.
+- Treat provider output as untrusted input and validate all structured data.
+
+## 19. Benchmark metrics
+
+Track these per run:
+
+- Objective completed
+- Verification passed
+- Human intervention required
+- Wrong initial route
+- Worker calls by provider
+- Jev calls
+- Input, cached input, and output tokens when available
+- Estimated provider cost
+- Wall-clock duration
+- Number of retries
+- Number of review cycles
+- Files changed
+- Scope-creep findings
+- Final diff accepted or rejected
+
+Do not claim savings from raw token reduction alone. A cheaper run that fails more often or creates worse diffs is not an improvement.
+
+## 20. First build sequence
+
+Use this order for the actual implementation:
+
+```bash
+mkdir adaptive-agent-harness
+cd adaptive-agent-harness
+bun init -y
+mkdir -p apps/cli/src
+mkdir -p packages/{core,protocol,config,runtime,decisions,workers,workspace,verification,persistence,telemetry}/src
+bun add -d @biomejs/biome @types/bun typescript
+```
+
+Then:
+
+1. Replace the generated root `package.json` with the workspace manifest in this document.
+2. Add a shared strict `tsconfig.json` and one package manifest per workspace.
+3. Implement `core` and `protocol` first, with no dependency on CLI, SQLite, or provider packages.
+4. Implement the config schema and loader in `packages/config`.
+5. Implement persistence contracts and the SQLite adapter.
+6. Implement the decision gateway, Jev client, and deterministic bypass.
+7. Implement the shared process runner and worker registry.
+8. Implement Codex and Cursor adapters.
+9. Implement workspace management, verification, and Git evidence.
+10. Implement `HarnessRuntime`, recovery, orchestration, and policy.
+11. Implement CLI commands exclusively against `HarnessRuntime`.
+12. Add benchmark fixtures after one end-to-end run works.
+
+Install runtime dependencies in the workspaces that own them:
+
+```bash
+bun add --cwd apps/cli commander
+bun add --cwd packages/config smol-toml yaml zod
+```
+
+Suggested `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["bun"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
+```
+
+## 21. Definition of done for Milestone 1
+
+Milestone 1 is complete when:
+
+1. One command accepts an objective and a target repository.
+2. The same configuration can be expressed in YAML or TOML.
+3. Jev is the default decision engine and routes between a configured Composer worker and Codex worker.
+4. The selected worker can make a bounded repository change.
+5. Configured verification commands run and their evidence is captured.
+6. Jev recommends a next action from a closed set.
+7. TypeScript policy either completes, retries, reviews, pauses, or fails within hard limits.
+8. SQLite contains a complete replayable event history.
+9. Fake-provider integration tests cover failures and timeouts.
+10. At least ten benchmark tasks can be compared against a non-harness baseline.
+11. CLI commands call `HarnessRuntime`; no orchestration or provider logic lives in CLI handlers.
+12. Runs can be paused, resumed, cancelled, and recovered after process restart.
+13. The deterministic decision bypass is explicit, configurable, observable, and tested.
+14. Events are versioned and can be replayed in sequence for a future UI.
+
+## 22. Product roadmap after Milestone 1
+
+Milestone 1 is the usable local CLI and permanent runtime foundation. Later milestones extend that foundation rather than rewriting it.
+
+### Milestone 2: Multi-agent local runtime
+
+- Isolated Git worktrees per editing task
+- Parallel research and review tasks
+- Agent-to-agent handoffs
+- Dependency-aware task graph
+- Workspace reconciliation and merge review
+- Rich terminal event stream
+- Agent and provider health commands
+
+### Milestone 3: Local daemon and control plane
+
+- Bun HTTP service wrapping `HarnessRuntime`
+- Server-sent events or WebSockets for live run events
+- Background and persistent runs
+- Restart recovery
+- Multiple repositories
+- CLI daemon client mode
+- Authentication limited to the local machine by default
+
+### Milestone 4: Bot-management web UI
+
+- Active and historical run views
+- Agent tree and task graph
+- Visible handoffs and messages
+- Jev decisions, probabilities, confidence, and policy outcomes
+- Token, latency, and cost views
+- Diff and verification views
+- Pause, redirect, retry, approve, resume, and cancel controls
+- YAML/TOML configuration editor with validation
+
+### Milestone 5: Context and scale
+
+- Headroom as a `ContextProvider`
+- Shared context and deduplication
+- Remote workers
+- Additional worker providers
+- Postgres persistence option
+- Queue-backed execution
+- Reusable workflow templates
+- Evaluation dashboards and routing calibration
+
+Headroom should be introduced as its own measured capability so its token impact can be separated from Jev's routing impact. Jev remains part of every normal operating milestone.
+
+## 23. Composer 2.5 implementation handoff
+
+Give Composer 2.5 the repository plus this document and use the following initial instruction:
+
+```text
+You are implementing Milestone 1 of the Adaptive Agent Harness described in
+"Adaptive Agent Harness: Foundation Architecture and Milestone 1 Plan."
+
+Treat the document as the implementation contract. This is a permanent product
+foundation, not a disposable proof of concept.
+
+Non-negotiable architectural requirements:
+
+1. Use Bun and strict TypeScript.
+2. Preserve the Bun workspace boundaries under apps/* and packages/*.
+3. The CLI is only a client of HarnessRuntime. Do not place orchestration,
+   provider execution, persistence, or decision policy in CLI handlers.
+4. Jev is the default and permanent decision engine behind DecisionGateway.
+5. Implement the deterministic bypass only as the documented explicit fallback.
+   Every bypass must emit a decision.bypassed event.
+6. Use versioned EventEnvelope records as the durable run protocol.
+7. Keep Codex and Cursor behind WorkerAdapter implementations.
+8. Keep SQLite behind persistence contracts.
+9. Never build shell command strings from user input. Use Bun.spawn argument arrays.
+10. Do not collapse packages or skip tests to move faster.
+
+Implement only Milestone 1.0 first:
+
+- Root Bun workspace configuration
+- All workspace package manifests
+- Shared strict TypeScript configuration
+- Biome configuration
+- Minimal exports for every package
+- The core domain types from the plan
+- The protocol types, including HarnessRuntime and EventEnvelope
+- Example YAML and TOML files
+- Unit tests proving the workspace imports and typechecks
+- README instructions for install, typecheck, test, lint, and build
+
+Do not implement provider calls, orchestration, SQLite, or CLI behavior yet.
+
+Before editing, inspect the repository and report:
+
+- the files you plan to create or modify,
+- any discrepancy between the repository and the architecture document,
+- any decision that would change a public contract.
+
+After implementation, run the complete validation suite and report:
+
+- files changed,
+- commands run and results,
+- remaining work for Milestone 1.1,
+- any assumptions that should be reviewed before continuing.
+```
+
+### Handoff rules for later Composer sessions
+
+For each milestone:
+
+1. Give Composer only the current milestone and relevant contracts.
+2. Require it to inspect existing code before proposing changes.
+3. Ask it to identify public contract changes before implementation.
+4. Require focused tests plus the complete validation command.
+5. Commit or checkpoint after each accepted milestone.
+6. Have Codex independently review boundary violations, state-machine correctness, error handling, and tests.
+7. Update this architecture document when an accepted decision changes a contract.
+
+### First review checkpoint for Codex
+
+Return for independent review after Composer completes Milestone 1.0. The review should verify:
+
+- Workspace dependencies point inward and do not create cycles.
+- `core` and `protocol` do not import CLI, provider, or persistence implementations.
+- Public types match this document.
+- Jev is represented as the permanent default behind `DecisionGateway`.
+- The deterministic mode is an explicit bypass rather than an equal default.
+- Package scripts work from the workspace root.
+- No implementation has prematurely coupled the future UI to SQLite or local processes.
+
+## References
+
+- TypeSafe Jev documentation: https://docs.typesafe.ai/introduction
+- TypeSafe Jev quick start and REST API shape: https://docs.typesafe.ai/introduction/quickstart
+- OpenAI Codex CLI command reference: https://developers.openai.com/codex/cli/reference
+- Cursor Agent CLI usage: https://cursor.com/docs/cli/using
+- Cursor Agent CLI output formats: https://cursor.com/docs/cli/reference/output-format

@@ -1,0 +1,101 @@
+version: 1
+
+project:
+  name: adaptive-harness
+  workspace: .
+
+storage:
+  database: .harness/harness.sqlite
+
+decision:
+  mode: jev
+  allowBypass: true
+  bypassEnv: HARNESS_DECISION_MODE
+  jev:
+    model: jev-latest
+    baseUrl: https://api.typesafe.ai/v1/systemone
+    apiKeyEnv: TYPESAFE_API_KEY
+    timeoutMs: 15000
+    transientRetries: 2
+  fallback:
+    onUnavailable: deterministic
+    onLowConfidence: ask-user
+
+providers:
+  codex:
+    kind: codex-cli
+    command: codex
+    model: null
+    sandbox: workspace-write
+    extraArgs: []
+
+  composer:
+    kind: cursor-cli
+    command: agent
+    model: composer-2.5
+    outputFormat: stream-json
+    extraArgs: []
+
+agents:
+  implementer:
+    provider: composer
+    purpose: implementation
+    instructions: |
+      Implement only the requested change. Preserve existing conventions.
+      Run focused checks when practical. Do not modify unrelated files.
+
+  reasoner:
+    provider: codex
+    purpose: implementation
+    instructions: |
+      Handle tasks requiring deeper repository analysis or complex debugging.
+      Implement only after understanding the relevant architecture.
+
+  reviewer:
+    provider: codex
+    purpose: review
+    readOnly: true
+    instructions: |
+      Review the objective, diff, and verification evidence independently.
+      Identify correctness issues, regressions, missing tests, and scope creep.
+
+routing:
+  defaultAgent: implementer
+  complexAgent: reasoner
+  reviewerAgent: reviewer
+  complexTaskScore: 3.5
+  requireReviewRiskScore: 3.0
+  autoProceedConfidence: 0.85
+  verifyConfidence: 0.65
+  askUserBelowConfidence: 0.50
+
+limits:
+  maxSteps: 8
+  maxRetriesPerTask: 2
+  maxWorkerCalls: 5
+  maxInputTokens: 1000000
+  maxCostUsd: 10
+  workerTimeoutMs: 1200000
+
+git:
+  requireRepository: true
+  requireClean: true
+  allowUntracked: false
+
+verification:
+  stopOnFailure: false
+  commands:
+    - name: typecheck
+      command: bun
+      args: [run, typecheck]
+      timeoutMs: 120000
+    - name: tests
+      command: bun
+      args: [test]
+      timeoutMs: 300000
+
+telemetry:
+  console: pretty
+  retainRawProviderEvents: true
+  redactEnvironment:
+    - TYPESAFE_API_KEY

@@ -1,0 +1,36 @@
+{
+  "name": "@adaptive-harness/root",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Jev-directed agent harness for Codex, Cursor, and future worker providers",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter @adaptive-harness/cli dev",
+    "build": "bun run --filter '*' build",
+    "compile": "bun --filter @adaptive-harness/cli compile",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "bun run format:check && bunx biome check .",
+    "check:fix": "prettier --write . && bunx biome check --write .",
+    "validate": "bun run typecheck && bun run check && bun test && bun run build"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "devDependencies": {
+    "@adaptive-harness/core": "workspace:*",
+    "@adaptive-harness/decisions": "workspace:*",
+    "@adaptive-harness/protocol": "workspace:*",
+    "@biomejs/biome": "^2.2.4",
+    "@types/bun": "^1.2.22",
+    "prettier": "^3.9.8",
+    "typescript": "^5.9.2"
+  }
+}
