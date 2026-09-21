@@ -1,0 +1,41 @@
+name: Feature
+description: New capability or user-facing behavior
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What should this unlock for the harness or its operators?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Commands, API, or UX; reference foundation doc sections if applicable
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist of done conditions
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Target milestone
+      options:
+        - Milestone 1 (CLI foundation)
+        - Milestone 2 (multi-agent)
+        - Milestone 3 (daemon)
+        - Milestone 4 (web UI)
+        - Milestone 5 (scale)
+        - Unscheduled
+    validations:
+      required: true

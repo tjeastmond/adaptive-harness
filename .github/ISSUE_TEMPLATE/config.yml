@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Milestone 1 plan
+    url: https://github.com/tjeastmond/adaptive-harness/blob/main/adaptive-agent-harness-foundation.md
+    about: Architecture and implementation milestones
+  - name: Issue guidance (humans and bots)
+    url: https://github.com/tjeastmond/adaptive-harness/blob/main/.github/ISSUE_GUIDANCE.md
+    about: How to file and update issues on this repo

@@ -26,3 +26,9 @@ bun run validate    # Full local quality gate
 ```
 
 Example configuration files: `harness.example.yaml`, `harness.example.toml`.
+
+## Tracking work
+
+Bugs, features, deferred tasks, and agent handoff notes live in **[GitHub Issues](https://github.com/tjeastmond/adaptive-harness/issues)**. Use the Bug, Feature, or Task / follow-up templates when creating issues.
+
+See [.github/ISSUE_GUIDANCE.md](./.github/ISSUE_GUIDANCE.md) for labels, CLI examples, and conventions for humans and bots.

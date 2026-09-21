@@ -1,0 +1,60 @@
+name: Task / follow-up
+description: Deferred work, milestone checklist item, refactor, or agent handoff note
+title: "[task]: "
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use for work that is not a single bug fix and not a full feature spec—implementation leftovers,
+        review findings, benchmark follow-ups, and bot-to-bot handoff notes.
+  - type: dropdown
+    id: source
+    attributes:
+      label: Reported by
+      options:
+        - human
+        - cursor-agent
+        - codex
+        - harness-runtime
+        - ci
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Where this was found (PR, run ID, file path, conversation summary)
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work to do
+      description: Concrete next steps; use a checklist when helpful
+      placeholder: |
+        - [ ] Implement packages/config loader
+        - [ ] Add tests for ...
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - blocking
+        - soon
+        - later
+        - icebox
+    validations:
+      required: true
+  - type: checkboxes
+    id: labels_hint
+    attributes:
+      label: Also apply (maintainers/agents may add labels after creation)
+      options:
+        - label: Mark as bot-report when filed by an automated agent
+          required: false
+        - label: Mark as deferred when explicitly out of current milestone
+          required: false

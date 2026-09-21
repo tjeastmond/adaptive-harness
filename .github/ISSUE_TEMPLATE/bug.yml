@@ -1,0 +1,60 @@
+name: Bug
+description: Incorrect behavior, regression, or failed verification
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for reproducible problems. Agents should link the run ID, config path, or test name when known.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong in one or two sentences?
+      placeholder: Config validate crashes when two default harness files exist
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Commands, config, and workspace state
+      placeholder: |
+        1. bun run validate
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - config
+        - protocol
+        - decisions / Jev
+        - workers
+        - runtime / orchestrator
+        - persistence
+        - cli
+        - tooling / ci
+        - other
+    validations:
+      required: true
+  - type: input
+    id: milestone
+    attributes:
+      label: Milestone (optional)
+      placeholder: "1.1, 1.6, etc."
