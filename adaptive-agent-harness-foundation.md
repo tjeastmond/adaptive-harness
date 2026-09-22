@@ -6,6 +6,15 @@ Configuration: YAML or TOML
 Permanent decision engine: TypeSafe Jev  
 Initial workers: OpenAI Codex CLI and Cursor Agent CLI with Composer 2.5
 
+> **Architecture amendment (September 2026).** The harness follows the Jev
+> state/context model: canonical run state is stored as typed, addressable
+> chunks and context is assembled per operation. The harness coordinates
+> existing CLIs, MCP servers, installed skills, and agent providers; it does
+> not recreate their domain integrations. The initial capability set should
+> use existing tools such as `git`, `gh`, configured verification commands,
+> Codex, and Cursor. Advanced dynamic tool disclosure and MCP/skill loading
+> remain later capabilities behind the same contracts.
+
 ## 1. Product goal
 
 Build a durable, local-first agent harness that accepts a coding objective, uses Jev as its permanent control-plane decision engine, delegates work to Codex or Cursor Composer, runs deterministic verification, and records the complete run as a replayable event stream.
@@ -32,6 +41,7 @@ The long-term product experience is:
 10. **The runtime is the product.** CLI, daemon, and web UI are clients of the same application contracts.
 11. **Events are a protocol, not only logs.** Versioned run events power persistence, terminal streaming, recovery, and the future UI.
 12. **Build a vertical slice, not throwaway code.** Milestone 1 limits scope while preserving the production boundaries and contracts.
+13. **Reuse capabilities.** The harness registers, configures, and governs existing tools rather than rebuilding service integrations. For example, GitHub work invokes `gh` under policy rather than a bespoke GitHub client.
 
 ## 3. Milestone 1 boundary
 
@@ -55,6 +65,8 @@ The long-term product experience is:
 - Versioned command and event protocol
 - Durable pause, resume, cancel, and approval states
 - Decision gateway with Jev and deterministic bypass modes
+- Typed state chunks, a state-store boundary, and a minimal context-assembler boundary
+- Configurable references to existing CLI, MCP, skill, and provider capabilities
 - Bun workspace structure that can add a daemon and web UI without moving core code
 
 ### Deferred
@@ -928,7 +940,7 @@ export type DecisionMode = "jev" | "deterministic";
 
 export interface DecisionContext {
   runId: RunId;
-  phase: "route" | "completion" | "handoff" | "context";
+  phase: "route" | "completion" | "handoff" | "context" | "tool" | "permission" | "delegation";
   mode: DecisionMode;
   reason?: string;
 }
@@ -1020,9 +1032,17 @@ export const completionQuestions = {
 } as const;
 ```
 
-### State construction
+### State and context construction
 
-Keep the state factual and compact:
+`StateChunk`s are the canonical, addressable record of a run. A transcript,
+raw provider event, file read, diff, or instruction can produce a chunk, but
+none is itself the complete state. Before each operation, `ContextAssembler`
+selects bounded factual chunks and records the selection. Milestone 1 begins
+with deterministic selection; Jev visibility scoring is an additive policy
+behind that seam.
+
+Jev receives the compact rendering of a `ContextAssembly`, not an accumulated
+conversation. A first rendering is:
 
 ```text
 OBJECTIVE
@@ -1040,6 +1060,10 @@ VERIFICATION
 RUN LIMITS
 <attempts, remaining worker calls, remaining token and cost budget>
 ```
+
+The assembly also retains the ordered chunk IDs, visibility level, and rendered
+content hash as evidence. This makes a later context choice replayable without
+turning transcripts into the source of truth.
 
 Never send unrestricted build logs or a full repository diff to Jev. Cap each evidence section and persist the full data separately.
 
@@ -1148,16 +1172,18 @@ Add loop guards so the same action cannot repeat indefinitely. For example, a re
 
 Use `bun:sqlite` and enable WAL mode. Start with these tables:
 
-| Table               | Purpose                                                        |
-| ------------------- | -------------------------------------------------------------- |
-| `runs`              | Objective, status, config hash, workspace, timestamps, outcome |
-| `tasks`             | Task tree, attempts, assignments, and status                   |
-| `events`            | Ordered append-only run timeline                               |
-| `decisions`         | Jev request state hash, questions, answers, usage, and latency |
-| `worker_calls`      | Provider, model, session, status, duration, usage, and result  |
-| `worker_events`     | Parsed or raw provider stream events                           |
-| `verification_runs` | Command, arguments, exit code, bounded output, and duration    |
-| `file_changes`      | Changed paths and diff statistics per step                     |
+| Table                | Purpose                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `runs`               | Objective, status, config hash, workspace, timestamps, outcome   |
+| `tasks`              | Task tree, attempts, assignments, and status                     |
+| `events`             | Ordered append-only run timeline                                 |
+| `state_chunks`       | Typed, addressable evidence from users, tools, files, and agents |
+| `context_assemblies` | Selected chunk IDs, visibility, rendered hash, and purpose       |
+| `decisions`          | Jev request state hash, questions, answers, usage, and latency   |
+| `worker_calls`       | Provider, model, session, status, duration, usage, and result    |
+| `worker_events`      | Parsed or raw provider stream events                             |
+| `verification_runs`  | Command, arguments, exit code, bounded output, and duration      |
+| `file_changes`       | Changed paths and diff statistics per step                       |
 
 Store large raw payloads as JSON text initially. For the local-first implementation, operational simplicity matters more than fully normalized analytics.
 
@@ -1212,12 +1238,13 @@ Exit criteria:
 
 ### Milestone 1.1: Protocol, configuration, and CLI shell
 
-1. Implement discovery and explicit `--config` handling.
-2. Parse YAML with `yaml` and TOML with `smol-toml`.
-3. Interpolate approved environment syntax.
-4. Validate with strict Zod schemas.
-5. Resolve paths relative to the config file.
-6. Add `config validate` and useful path-specific error messages.
+1. Define `StateChunk`, `StateStore`, `ContextAssembler`, task access, and external-capability contracts before implementing config parsing.
+2. Implement discovery and explicit `--config` handling.
+3. Parse YAML with `yaml` and TOML with `smol-toml`.
+4. Interpolate approved environment syntax.
+5. Validate with strict Zod schemas.
+6. Resolve paths relative to the config file.
+7. Add `config validate` and useful path-specific error messages.
 
 Exit criteria:
 
@@ -1227,9 +1254,11 @@ Exit criteria:
 ### Milestone 1.2: Persistence and versioned event protocol
 
 1. Create SQLite migrations with `bun:sqlite`.
-2. Implement the append-only event sink.
-3. Add run, task, decision, and worker-call repositories.
-4. Add `runs list` and `runs show`.
+2. Persist typed state chunks separately from events and support bounded run-scoped lookup.
+3. Implement a minimal deterministic `ContextAssembler` that records the selected chunks and visibility.
+4. Implement the append-only event sink.
+5. Add run, task, decision, and worker-call repositories.
+6. Add `runs list` and `runs show`.
 
 Exit criteria:
 
@@ -1485,7 +1514,7 @@ Milestone 1 is the usable local CLI and permanent runtime foundation. Later mile
 
 ### Milestone 5: Context and scale
 
-- Headroom as a `ContextProvider`
+- Optional context-compression providers, including Headroom, behind `ContextAssembler`
 - Shared context and deduplication
 - Remote workers
 - Additional worker providers

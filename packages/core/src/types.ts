@@ -2,6 +2,8 @@ export type RunId = string;
 export type TaskId = string;
 export type WorkerCallId = string;
 export type DecisionId = string;
+export type StateChunkId = string;
+export type CapabilityId = string;
 
 export type TaskKind = "implementation" | "debugging" | "architecture" | "research" | "review";
 
@@ -18,6 +20,78 @@ export interface Objective {
   suppliedContext?: string;
 }
 
+/**
+ * Canonical, addressable state. A conversation transcript is one possible
+ * source of chunks, never the sole representation of a run.
+ */
+export type StateChunkType =
+  | "user-message"
+  | "agent-result"
+  | "file"
+  | "file-fragment"
+  | "diff"
+  | "tool-input"
+  | "tool-output"
+  | "instruction"
+  | "plan"
+  | "observation"
+  | "review"
+  | "test-result";
+
+export interface StateChunk {
+  id: StateChunkId;
+  runId: RunId;
+  type: StateChunkType;
+  source: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+  content: unknown;
+}
+
+export type ContextVisibility = "hidden" | "short" | "long" | "full";
+
+export interface ContextAssemblyRequest {
+  runId: RunId;
+  purpose: "worker" | "decision" | "review" | "verification";
+  objective: Objective;
+  candidateChunkIds?: StateChunkId[];
+}
+
+export interface ContextAssembly {
+  chunks: Array<{ chunk: StateChunk; visibility: ContextVisibility }>;
+  summary: string;
+}
+
+export interface StateStore {
+  append(chunk: StateChunk): Promise<void>;
+  get(id: StateChunkId): Promise<StateChunk | undefined>;
+  list(runId: RunId, options?: { types?: StateChunkType[]; limit?: number }): Promise<StateChunk[]>;
+}
+
+export interface ContextAssembler {
+  assemble(request: ContextAssemblyRequest): Promise<ContextAssembly>;
+}
+
+export type TaskAccessMode = "read" | "write";
+
+export interface TaskAccess {
+  mode: TaskAccessMode;
+  resources?: string[];
+}
+
+/** A reference to a pre-existing capability; the harness does not reimplement it. */
+export type CapabilityKind = "cli" | "mcp" | "skill" | "provider";
+
+export interface CapabilityDefinition {
+  id: CapabilityId;
+  kind: CapabilityKind;
+  description: string;
+  enabled: boolean;
+  permission: "allow" | "ask" | "deny";
+  command?: string;
+  reference?: string;
+}
+
 export interface HarnessTask {
   id: TaskId;
   runId: RunId;
@@ -26,6 +100,7 @@ export interface HarnessTask {
   objective: Objective;
   attempt: number;
   assignedAgent?: string;
+  access: TaskAccess;
   status: "pending" | "running" | "completed" | "failed" | "paused";
   createdAt: string;
   updatedAt: string;
