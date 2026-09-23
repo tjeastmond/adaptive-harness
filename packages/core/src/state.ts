@@ -29,19 +29,23 @@ export class InMemoryStateStore implements StateStore {
     return chunk === undefined ? undefined : structuredClone(chunk);
   }
 
-  async list(runId: string, options?: { types?: StateChunkType[]; limit?: number }): Promise<StateChunk[]> {
+  async list(
+    runId: string,
+    options?: { types?: StateChunkType[]; ids?: StateChunkId[]; limit?: number },
+  ): Promise<StateChunk[]> {
     if (options?.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 0)) {
       throw new Error("State chunk limit must be a nonnegative integer");
     }
 
     const allowedTypes = options?.types && new Set(options.types);
+    const allowedIds = options?.ids && new Set(options.ids);
     const chunks = (this.runIds.get(runId) ?? [])
       .map((id) => {
         const chunk = this.chunks.get(id);
         if (!chunk) throw new Error(`Missing state chunk: ${id}`);
         return chunk;
       })
-      .filter((chunk) => !allowedTypes || allowedTypes.has(chunk.type));
+      .filter((chunk) => (!allowedTypes || allowedTypes.has(chunk.type)) && (!allowedIds || allowedIds.has(chunk.id)));
     const selected = options?.limit === undefined ? chunks : options.limit === 0 ? [] : chunks.slice(-options.limit);
     return selected.map((chunk) => structuredClone(chunk));
   }
@@ -70,7 +74,10 @@ export class DeterministicContextAssembler implements ContextAssembler {
   }
 
   async assemble(request: ContextAssemblyRequest): Promise<ContextAssembly> {
-    const candidates = await this.store.list(request.runId);
+    const candidates = await this.store.list(
+      request.runId,
+      request.candidateChunkIds === undefined ? undefined : { ids: request.candidateChunkIds },
+    );
     const candidateIds = request.candidateChunkIds && new Set(request.candidateChunkIds);
     const eligible = candidates.filter((chunk) => !candidateIds || candidateIds.has(chunk.id));
     const selected = this.maxChunks === 0 ? [] : eligible.slice(-this.maxChunks).reverse();

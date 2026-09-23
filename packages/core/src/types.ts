@@ -67,7 +67,10 @@ export interface ContextAssembly {
 export interface StateStore {
   append(chunk: StateChunk): Promise<void>;
   get(id: StateChunkId): Promise<StateChunk | undefined>;
-  list(runId: RunId, options?: { types?: StateChunkType[]; limit?: number }): Promise<StateChunk[]>;
+  list(
+    runId: RunId,
+    options?: { types?: StateChunkType[]; ids?: StateChunkId[]; limit?: number },
+  ): Promise<StateChunk[]>;
 }
 
 export interface ContextAssembler {

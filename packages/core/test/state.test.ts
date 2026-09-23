@@ -30,6 +30,10 @@ describe("InMemoryStateStore", () => {
     expect((await store.list("run-1")).map(({ id }) => id)).toEqual(["first", "second", "third"]);
     expect((await store.list("run-1", { types: ["test-result"] })).map(({ id }) => id)).toEqual(["second"]);
     expect((await store.list("run-1", { limit: 2 })).map(({ id }) => id)).toEqual(["second", "third"]);
+    expect((await store.list("run-1", { ids: ["third", "first", "other"] })).map(({ id }) => id)).toEqual([
+      "first",
+      "third",
+    ]);
     expect(await store.list("run-1", { limit: 0 })).toEqual([]);
     expect(await store.get("missing")).toBeUndefined();
   });
