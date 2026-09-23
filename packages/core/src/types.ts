@@ -60,6 +60,8 @@ export interface ContextAssemblyRequest {
 export interface ContextAssembly {
   chunks: Array<{ chunk: StateChunk; visibility: ContextVisibility }>;
   summary: string;
+  /** SHA-256 of the exact summary sent to the next operation. */
+  renderedContentHash: string;
 }
 
 export interface StateStore {
