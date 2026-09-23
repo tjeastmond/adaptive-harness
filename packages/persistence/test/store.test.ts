@@ -52,7 +52,7 @@ test("migration is idempotent and enables WAL and foreign keys", async () => {
   expect(await second.getRun("run-1")).toEqual(run());
   second.close();
   const db = new Database(path);
-  expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);
+  expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
   expect((db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
   db.close();
 });

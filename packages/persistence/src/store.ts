@@ -1,7 +1,20 @@
 import { Database } from "bun:sqlite";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DecisionResponse, HarnessRun, HarnessTask, RunStatus, WorkerResult } from "@adaptive-harness/core";
+import type {
+  ContextAssembly,
+  ContextAssemblyRequest,
+  ContextVisibility,
+  DecisionResponse,
+  HarnessRun,
+  HarnessTask,
+  RunStatus,
+  StateChunk,
+  StateChunkType,
+  StateStore,
+  WorkerResult,
+} from "@adaptive-harness/core";
 import type { EventEnvelope } from "@adaptive-harness/protocol";
 
 export interface DecisionRecord {
@@ -20,6 +33,16 @@ export interface WorkerCallRecord {
   createdAt: string;
   model?: string;
   result: WorkerResult;
+}
+
+export interface ContextAssemblyRecord {
+  id: string;
+  runId: string;
+  purpose: ContextAssemblyRequest["purpose"];
+  createdAt: string;
+  selectedChunks: Array<{ chunkId: string; visibility: ContextVisibility }>;
+  summary: string;
+  renderedContentHash: string;
 }
 
 export interface StoreOptions {
@@ -91,6 +114,15 @@ interface EventRow {
   causation_id: string | null;
   payload: string;
 }
+interface ContextRow {
+  id: string;
+  run_id: string;
+  purpose: ContextAssemblyRequest["purpose"];
+  created_at: string;
+  selected_chunks: string;
+  rendered_summary: string;
+  rendered_content_hash: string;
+}
 
 const MIGRATIONS = [
   `CREATE TABLE runs (
@@ -122,6 +154,27 @@ const MIGRATIONS = [
     FOREIGN KEY(task_id, run_id) REFERENCES tasks(id, run_id)
   );
   CREATE INDEX worker_calls_run_created ON worker_calls(run_id, created_at, id);`,
+  `CREATE TABLE state_chunks (
+    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    type TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL
+  );
+  CREATE INDEX state_chunks_run_ordinal ON state_chunks(run_id, ordinal);
+  CREATE INDEX state_chunks_run_type_ordinal ON state_chunks(run_id, type, ordinal);
+  CREATE TABLE context_assemblies (
+    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    run_id TEXT NOT NULL REFERENCES runs(id),
+    purpose TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    selected_chunks TEXT NOT NULL,
+    rendered_summary TEXT NOT NULL,
+    rendered_content_hash TEXT NOT NULL
+  );
+  CREATE INDEX context_assemblies_run_ordinal ON context_assemblies(run_id, ordinal);`,
 ] as const;
 
 function boundedLimit(limit: number | undefined): number {
@@ -139,9 +192,10 @@ function boundedEventLimit(limit: number): number {
   return limit;
 }
 
-export class SqliteHarnessStore {
+export class SqliteHarnessStore implements StateStore {
   readonly #db: Database;
   readonly #options: StoreOptions;
+  readonly #schemaVersion: number;
 
   constructor(databasePath: string, options: StoreOptions = {}) {
     this.#options = options;
@@ -149,11 +203,12 @@ export class SqliteHarnessStore {
     this.#db = new Database(databasePath, options.readonly ? { readonly: true } : { create: true });
     if (!options.readonly) this.#db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     const version = this.#db.query("PRAGMA user_version").get() as { user_version: number };
-    if (version.user_version > MIGRATIONS.length || (options.readonly && version.user_version !== MIGRATIONS.length)) {
+    if (version.user_version > MIGRATIONS.length || (options.readonly && version.user_version < 1)) {
       this.#db.close();
       throw new Error(`Unsupported database schema version ${version.user_version}`);
     }
-    for (let index = version.user_version; index < MIGRATIONS.length; index++) {
+    this.#schemaVersion = options.readonly ? version.user_version : MIGRATIONS.length;
+    for (let index = options.readonly ? MIGRATIONS.length : version.user_version; index < MIGRATIONS.length; index++) {
       const migration = MIGRATIONS[index];
       if (!migration) throw new Error(`Missing database migration ${index + 1}`);
       this.#db.transaction(() => {
@@ -307,6 +362,133 @@ export class SqliteHarnessStore {
     return this.#list<WorkerCallRecord>("worker_calls", runId);
   }
 
+  /** Append-only canonical run state. The ordinal preserves insertion order across restarts. */
+  async append(chunk: StateChunk): Promise<void> {
+    this.#requireStateSchema();
+    if (!chunk.id || !chunk.runId) throw new Error("State chunks require an id and runId");
+    this.#db
+      .query("INSERT INTO state_chunks(id, run_id, type, created_at, data) VALUES (?, ?, ?, ?, ?)")
+      .run(chunk.id, chunk.runId, chunk.type, chunk.createdAt, json(chunk, this.#options));
+  }
+
+  async get(id: string): Promise<StateChunk | undefined> {
+    this.#requireStateSchema();
+    const row = this.#db.query("SELECT data FROM state_chunks WHERE id = ?").get(id) as JsonRow | null;
+    return row ? parse<StateChunk>(row.data) : undefined;
+  }
+
+  async list(
+    runId: string,
+    options: { types?: StateChunkType[]; ids?: string[]; limit?: number } = {},
+  ): Promise<StateChunk[]> {
+    this.#requireStateSchema();
+    const limit = options.limit ?? 500;
+    if (!Number.isSafeInteger(limit) || limit < 0 || limit > 1_000) {
+      throw new Error("State chunk limit must be an integer from 0 to 1000");
+    }
+    if (options.ids && options.ids.length > 1_000) {
+      throw new Error("State chunk ID filter exceeds 1000 IDs");
+    }
+    if (limit === 0 || options.types?.length === 0 || options.ids?.length === 0) return [];
+    const types = options.types;
+    const ids = options.ids;
+    const clauses = ["run_id = ?"];
+    const args: Array<string | number> = [runId];
+    if (types) {
+      clauses.push(`type IN (${types.map(() => "?").join(",")})`);
+      args.push(...types);
+    }
+    if (ids) {
+      clauses.push(`id IN (${ids.map(() => "?").join(",")})`);
+      args.push(...ids);
+    }
+    const rows = this.#db
+      .query(`SELECT data FROM state_chunks WHERE ${clauses.join(" AND ")} ORDER BY ordinal DESC LIMIT ?`)
+      .all(...args, limit);
+    return (rows as JsonRow[]).reverse().map((row) => parse<StateChunk>(row.data));
+  }
+
+  /** Records an exact bounded snapshot of the context sent to the next operation. */
+  async recordContextAssembly(
+    request: ContextAssemblyRequest,
+    assembly: ContextAssembly,
+    identity: { id?: string; createdAt?: string } = {},
+  ): Promise<ContextAssemblyRecord> {
+    this.#requireStateSchema();
+    const hash = createHash("sha256").update(assembly.summary).digest("hex");
+    if (hash !== assembly.renderedContentHash) throw new Error("Context assembly hash does not match summary");
+    const sanitizedSummary = json(assembly.summary, this.#options);
+    if (parse<string>(sanitizedSummary) !== assembly.summary) {
+      throw new Error("Context summary contains redacted or truncated content");
+    }
+    if (assembly.chunks.length > 1_000) throw new Error("Context assembly selects too many chunks");
+    const selectedChunks = assembly.chunks.map(({ chunk, visibility }) => ({ chunkId: chunk.id, visibility }));
+    if (new Set(selectedChunks.map((item) => item.chunkId)).size !== selectedChunks.length) {
+      throw new Error("Context assembly selects a chunk more than once");
+    }
+    const selectedJson = JSON.stringify(selectedChunks);
+    if (Buffer.byteLength(selectedJson, "utf8") > (this.#options.maxJsonBytes ?? DEFAULT_MAX_JSON_BYTES)) {
+      throw new Error("Context assembly selection exceeds configured size limit");
+    }
+    const record: ContextAssemblyRecord = {
+      id: identity.id ?? randomUUID(),
+      runId: request.runId,
+      purpose: request.purpose,
+      createdAt: identity.createdAt ?? new Date().toISOString(),
+      selectedChunks,
+      summary: assembly.summary,
+      renderedContentHash: hash,
+    };
+    this.#db.transaction(() => {
+      for (const item of selectedChunks) {
+        const row = this.#db
+          .query("SELECT 1 FROM state_chunks WHERE id = ? AND run_id = ?")
+          .get(item.chunkId, request.runId);
+        if (!row) throw new Error(`Context chunk ${item.chunkId} does not belong to run ${request.runId}`);
+      }
+      this.#db
+        .query(
+          `INSERT INTO context_assemblies
+        (id, run_id, purpose, created_at, selected_chunks, rendered_summary, rendered_content_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(record.id, record.runId, record.purpose, record.createdAt, selectedJson, assembly.summary, hash);
+    })();
+    return record;
+  }
+
+  async getContextAssembly(id: string): Promise<ContextAssemblyRecord | undefined> {
+    this.#requireStateSchema();
+    const row = this.#db
+      .query(
+        `SELECT id, run_id, purpose, created_at, selected_chunks, rendered_summary,
+      rendered_content_hash FROM context_assemblies WHERE id = ?`,
+      )
+      .get(id) as ContextRow | null;
+    return row ? contextRecord(row) : undefined;
+  }
+
+  async listContextAssemblies(runId: string, limit = 100): Promise<ContextAssemblyRecord[]> {
+    this.#requireStateSchema();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("Context assembly limit must be an integer from 1 to 1000");
+    }
+    const rows = this.#db
+      .query(
+        `SELECT id, run_id, purpose, created_at, selected_chunks, rendered_summary,
+      rendered_content_hash FROM context_assemblies WHERE run_id = ?
+      ORDER BY ordinal DESC LIMIT ?`,
+      )
+      .all(runId, limit) as ContextRow[];
+    return rows.reverse().map(contextRecord);
+  }
+
+  #requireStateSchema(): void {
+    if (this.#schemaVersion < 2) {
+      throw new Error("State and context queries require database schema version 2");
+    }
+  }
+
   #get<T>(table: "tasks" | "decisions" | "worker_calls", id: string): T | undefined {
     const row = this.#db.query(`SELECT data FROM ${table} WHERE id = ?`).get(id) as JsonRow | null;
     return row ? parse<T>(row.data) : undefined;
@@ -317,4 +499,16 @@ export class SqliteHarnessStore {
       .all(runId) as JsonRow[];
     return rows.map((row) => parse<T>(row.data));
   }
+}
+
+function contextRecord(row: ContextRow): ContextAssemblyRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    purpose: row.purpose,
+    createdAt: row.created_at,
+    selectedChunks: parse<ContextAssemblyRecord["selectedChunks"]>(row.selected_chunks),
+    summary: row.rendered_summary,
+    renderedContentHash: row.rendered_content_hash,
+  };
 }
