@@ -56,9 +56,10 @@ gh issue create --label "bug,bot-report" ...
 
 1. **One issue per logical item**—do not combine unrelated bugs or tasks.
 2. Put **reproduction steps, paths, and commit SHAs** in the body, not only in chat.
-3. Reference the **foundation doc milestone** (e.g. 1.1, 1.6) when scope matches.
+3. Reference the **foundation doc milestone** (e.g. 1.1, 1.6) when scope matches, and assign the issue to the corresponding GitHub Milestone.
 4. Do **not** assign credit to tools in titles or bodies (no “Cursor found…”—state the finding neutrally).
 5. Link PRs with `Fixes #123` or `Refs #123` in the PR description when applicable.
+6. Add each durable issue to the [adaptive-harness GitHub Project](https://github.com/users/tjeastmond/projects/2) so the product backlog and milestone progress stay connected.
 
 ## Issue lifecycle
 
