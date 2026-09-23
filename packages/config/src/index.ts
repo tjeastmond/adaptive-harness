@@ -13,6 +13,8 @@ export interface LoadHarnessConfigOptions {
   cwd?: string;
   configPath?: string;
   env?: Record<string, string | undefined>;
+  /** Read-only commands can inspect local runs without provider credentials. */
+  requireSecrets?: boolean;
 }
 
 const defaultFiles = ["harness.yaml", "harness.yml", "harness.toml"] as const;
@@ -183,7 +185,9 @@ export async function loadHarnessConfig(
   const declaredSecrets = new Set([config.decision.jev.apiKeyEnv, ...config.telemetry.redactEnvironment]);
   for (const name of declaredSecrets) {
     const value = env[name];
-    if (!value) throw new Error(`Invalid config in ${path}: missing secret environment variable ${name}`);
+    if (!value && options.requireSecrets !== false)
+      throw new Error(`Invalid config in ${path}: missing secret environment variable ${name}`);
+    if (!value) continue;
     if (containsSecret(config, value)) {
       throw new Error(`Invalid config in ${path}: secret environment value for ${name} must not be stored in config`);
     }

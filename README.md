@@ -36,6 +36,15 @@ bun run apps/cli/src/cli.ts config validate --config harness.example.yaml
 
 The CLI can also discover `harness.yaml`, `harness.yml`, or `harness.toml` in the current directory. If more than one exists, pass `--config` explicitly.
 
+After a run database exists, inspect persisted runs without provider credentials:
+
+```bash
+bun run apps/cli/src/cli.ts runs list --config harness.yaml
+bun run apps/cli/src/cli.ts runs show <run-id> --config harness.yaml --events
+```
+
+Both commands support `--json`. Use `--limit` to bound results; `runs show --events --after <sequence>` reads the next page of events. These commands read run history and do not start agents.
+
 ## Tracking work
 
 Bugs, features, deferred tasks, and agent handoff notes live in **[GitHub Issues](https://github.com/tjeastmond/adaptive-harness/issues)**. Use the Bug, Feature, or Task / follow-up templates when creating issues.
