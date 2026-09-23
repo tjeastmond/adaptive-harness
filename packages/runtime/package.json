@@ -9,5 +9,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@adaptive-harness/core": "workspace:*",
+    "@adaptive-harness/persistence": "workspace:*",
+    "@adaptive-harness/protocol": "workspace:*"
   }
 }

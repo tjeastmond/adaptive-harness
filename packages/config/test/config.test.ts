@@ -89,6 +89,7 @@ describe("loadHarnessConfig", () => {
     await expect(loadHarnessConfig({ cwd: dir, env })).rejects.toThrow("secret environment value");
     await writeFile(path, yamlExample);
     await expect(load({ cwd: dir, env: {} })).rejects.toThrow("missing secret environment variable TYPESAFE_API_KEY");
+    expect((await load({ cwd: dir, env: {}, requireSecrets: false })).config.project.name).toBe("adaptive-harness");
     await expect(loadHarnessConfig({ cwd: dir, env: { TYPESAFE_API_KEY: basename(dir) } })).rejects.toThrow(
       "secret environment value",
     );

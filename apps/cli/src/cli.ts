@@ -1,18 +1,23 @@
 #!/usr/bin/env bun
 
 import { loadHarnessConfig } from "@adaptive-harness/config";
+import { runRunsCommand } from "./runs.ts";
 
 const USAGE = `Usage:
   harness config validate [--config path]
+  harness runs list [--config path] [--limit number] [--json]
+  harness runs show <run-id> [--config path] [--events] [--after sequence] [--limit number] [--json]
   harness --help
 
-Run commands will be added in later milestones.`;
+Agent execution commands will be added in later milestones.`;
 
 export async function runCli(args: string[]): Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(USAGE);
     return 0;
   }
+
+  if (args[0] === "runs") return runRunsCommand(args.slice(1));
 
   if (args[0] !== "config" || args[1] !== "validate") {
     console.error(`Unknown command: ${args.join(" ")}`);
