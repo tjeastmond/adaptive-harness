@@ -13,6 +13,7 @@
     "compile": "bun build src/cli.ts --compile --outfile ../../dist/harness"
   },
   "dependencies": {
+    "@adaptive-harness/config": "workspace:*",
     "@adaptive-harness/protocol": "workspace:*"
   }
 }

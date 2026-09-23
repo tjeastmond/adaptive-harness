@@ -27,6 +27,15 @@ bun run validate    # Full local quality gate
 
 Example configuration files: `harness.example.yaml`, `harness.example.toml`.
 
+Validate a configuration without starting a run:
+
+```bash
+export TYPESAFE_API_KEY=... # required by the example configuration
+bun run apps/cli/src/cli.ts config validate --config harness.example.yaml
+```
+
+The CLI can also discover `harness.yaml`, `harness.yml`, or `harness.toml` in the current directory. If more than one exists, pass `--config` explicitly.
+
 ## Tracking work
 
 Bugs, features, deferred tasks, and agent handoff notes live in **[GitHub Issues](https://github.com/tjeastmond/adaptive-harness/issues)**. Use the Bug, Feature, or Task / follow-up templates when creating issues.

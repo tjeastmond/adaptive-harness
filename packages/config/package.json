@@ -9,5 +9,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "smol-toml": "^1.4.2",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.12"
   }
 }
