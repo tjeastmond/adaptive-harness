@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@adaptive-harness/core": "workspace:*",
+    "@adaptive-harness/decisions": "workspace:*",
     "@adaptive-harness/persistence": "workspace:*",
     "@adaptive-harness/protocol": "workspace:*"
   }

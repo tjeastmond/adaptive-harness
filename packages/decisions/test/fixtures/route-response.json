@@ -1,0 +1,85 @@
+{
+  "request": {
+    "state": "A small, clear coding task: rename one local helper and run the existing unit tests.",
+    "questions": {
+      "task_kind": {
+        "type": "choice",
+        "instructions": "Classify the primary kind of work required by the objective",
+        "criteria": {
+          "implementation": "A bounded code change with sufficiently clear requirements",
+          "debugging": "The cause of incorrect behavior must be identified and fixed",
+          "architecture": "The task requires consequential system design before implementation",
+          "research": "The task primarily requires gathering information",
+          "review": "The task primarily requires evaluating an existing change"
+        }
+      },
+      "complexity": {
+        "type": "score",
+        "instructions": "Score the engineering complexity of completing this objective",
+        "criteria": [
+          "Trivial and localized",
+          "Small and well understood",
+          "Moderate with several interacting concerns",
+          "Complex and cross-cutting",
+          "Highly complex or architecturally consequential"
+        ]
+      },
+      "requirements_clear": {
+        "type": "noul",
+        "instructions": "The objective is clear enough for an agent to begin safely"
+      },
+      "external_research_needed": {
+        "type": "noul",
+        "instructions": "Completing the objective requires information not likely present in the repository"
+      }
+    }
+  },
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "task_kind": {
+        "type": "choice",
+        "choice": "implementation",
+        "confidence": 1,
+        "probabilities": {
+          "implementation": 1,
+          "research": 0,
+          "architecture": 0,
+          "debugging": 0,
+          "review": 0
+        }
+      },
+      "complexity": {
+        "type": "score",
+        "score": 0.03,
+        "confidence": 0.97,
+        "legend": {
+          "0": "Trivial and localized",
+          "1": "Small and well understood",
+          "2": "Moderate with several interacting concerns",
+          "3": "Complex and cross-cutting",
+          "4": "Highly complex or architecturally consequential"
+        },
+        "probabilities": {
+          "0": 0.97,
+          "1": 0.03,
+          "2": 0,
+          "3": 0,
+          "4": 0
+        }
+      },
+      "requirements_clear": {
+        "type": "noul",
+        "noul": 0.86
+      },
+      "external_research_needed": {
+        "type": "noul",
+        "noul": 0.19
+      }
+    },
+    "usage": {
+      "input_tokens": 518,
+      "output_tokens": 108
+    }
+  }
+}

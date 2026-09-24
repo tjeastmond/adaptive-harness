@@ -6,6 +6,7 @@ import type {
   ContextAssembly,
   ContextAssemblyRequest,
   ContextVisibility,
+  DecisionQuestion,
   DecisionResponse,
   HarnessRun,
   HarnessTask,
@@ -23,7 +24,13 @@ export interface DecisionRecord {
   createdAt: string;
   phase: "route" | "completion" | "handoff" | "context";
   requestStateHash: string;
-  response: DecisionResponse;
+  questions?: Record<string, DecisionQuestion>;
+  response?: DecisionResponse;
+  requestedMode?: "jev" | "deterministic";
+  selectedMode?: "jev" | "deterministic";
+  fallbackReason?: string;
+  previousResponse?: DecisionResponse;
+  errorCode?: string;
 }
 
 export interface WorkerCallRecord {
