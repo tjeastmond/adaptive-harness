@@ -25,6 +25,12 @@ bun run build       # Package build checks
 bun run validate    # Full local quality gate
 ```
 
+The Jev contract tests use a sanitized recorded API fixture. To run the live smoke test with `TYPESAFE_API_KEY` set:
+
+```bash
+JEV_LIVE_SMOKE=1 bun test packages/decisions/test/jev.live.test.ts
+```
+
 Example configuration files: `harness.example.yaml`, `harness.example.toml`.
 
 Validate a configuration without starting a run:

@@ -5,7 +5,7 @@ export type DecisionMode = "jev" | "deterministic";
 export interface DecisionContext {
   runId: RunId;
   phase: "route" | "completion" | "handoff" | "context" | "tool" | "permission" | "delegation";
-  mode: DecisionMode;
+  mode?: DecisionMode;
   reason?: string;
 }
 
