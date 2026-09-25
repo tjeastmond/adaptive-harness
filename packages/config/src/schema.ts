@@ -13,7 +13,7 @@ export const ProviderSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("cursor-cli"),
-      command: z.string().min(1).default("agent"),
+      command: z.string().min(1).default("cursor-agent"),
       model: z.string().min(1).nullable().default(null),
       outputFormat: z.enum(["json", "stream-json", "text"]).default("stream-json"),
       extraArgs: z.array(z.string()).default([]),

@@ -31,7 +31,7 @@ extraArgs = []
 
 [providers.composer]
 kind = "cursor-cli"
-command = "agent"
+command = "cursor-agent"
 model = "composer-2.5"
 outputFormat = "stream-json"
 extraArgs = []
