@@ -43,7 +43,10 @@ const MAX_RESPONSE_BYTES = 256_000;
 const MAX_STATE_CHARACTERS = 32_000;
 const MAX_QUESTIONS = 32;
 const MAX_RAW_STRING = 16_000;
-/** Jev reports probabilities to two decimals, so each may be off by up to half a hundredth. */
+/**
+ * Jev reports probabilities and scores to two decimals, so each may be off by up to half a hundredth. Comparisons
+ * add `Number.EPSILON` so a difference exactly at the bound is not rejected by floating-point subtraction error.
+ */
 const PROBABILITY_ROUNDING = 0.005;
 const MIN_TOLERANCE = 0.02;
 
@@ -112,7 +115,8 @@ function validateAnswer(value: unknown, question: DecisionQuestion): DecisionAns
   }
   const probabilities = validateProbabilities(answer.probabilities, keys);
   const weightedScore = keys.reduce((sum, key, index) => sum + index * (probabilities[key] ?? 0), 0);
-  // Jev computes the score from unrounded probabilities; rounding error grows with each criterion's index.
+  // Jev computes the score from unrounded probabilities. Each probability's rounding error is weighted by its
+  // index, and the `+ 1` covers the rounding of the score itself.
   const indexTotal = keys.reduce((sum, _, index) => sum + index, 0);
   const scoreTolerance = Math.max(MIN_TOLERANCE, PROBABILITY_ROUNDING * (indexTotal + 1));
   if (Math.abs(answer.score - weightedScore) > scoreTolerance + Number.EPSILON) {
