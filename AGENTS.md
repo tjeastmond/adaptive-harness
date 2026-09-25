@@ -37,6 +37,12 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 - Reference the relevant foundation milestone and include paths, verification evidence, and commit SHAs when available.
 - Keep one logical item per issue; use issue comments for new evidence on an existing item.
 
+## Git and PR hygiene
+
+- When merging a pull request, delete its source branch. Use `gh pr merge --delete-branch` and verify the remote branch is gone.
+- After merging, prune stale remote-tracking refs and delete the local source branch. If it is checked out in a clean linked worktree, detach that worktree at its current commit before deleting the branch; preserve the worktree files.
+- Never delete a branch with uncommitted changes or while an active agent still needs that branch.
+
 ## Implementation expectations
 
 - Keep changes narrowly scoped and add focused tests with the implementation.
