@@ -175,7 +175,7 @@ describe("Git evidence", () => {
   test("rejects states from different repositories", async () => {
     const left = await repository();
     const right = await repository();
-    expect(compareGitStates(await captureGitState(left), await captureGitState(right))).rejects.toThrow(
+    await expect(compareGitStates(await captureGitState(left), await captureGitState(right))).rejects.toThrow(
       "different repositories",
     );
   });

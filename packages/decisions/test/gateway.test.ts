@@ -120,7 +120,7 @@ test("only exhausted transient Jev failures use the configured fallback", async 
       throw new Error("malformed response");
     }),
   );
-  expect(invalid.gateway.evaluate(context, route)).rejects.toThrow("malformed response");
+  await expect(invalid.gateway.evaluate(context, route)).rejects.toThrow("malformed response");
   expect(invalid.bypasses).toEqual([]);
   expect(invalid.audits[0]?.errorCode).toBe("jev-invalid");
 });
@@ -132,8 +132,8 @@ test("low confidence records the Jev answer and requests a human when configured
     "ask-user",
   );
   const outcome = gateway.evaluate(context, route);
-  expect(outcome).rejects.toBeInstanceOf(DecisionHandoffError);
-  expect(outcome).rejects.toThrow("low-confidence");
+  await expect(outcome).rejects.toBeInstanceOf(DecisionHandoffError);
+  await expect(outcome).rejects.toThrow("low-confidence");
   expect(audits[0]).toMatchObject({ selectedMode: "jev", fallbackReason: "low-confidence", response });
   expect(bypasses).toEqual([]);
 });

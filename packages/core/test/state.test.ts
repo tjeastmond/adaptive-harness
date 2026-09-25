@@ -48,8 +48,8 @@ describe("InMemoryStateStore", () => {
     expect(retrieved.content).toEqual({ value: "original" });
     (retrieved.content as { value: string }).value = "changed again";
     expect((await store.get("one"))?.content).toEqual({ value: "original" });
-    expect(store.append(chunk("one", "run-2"))).rejects.toThrow("already exists");
-    expect(store.list("run-1", { limit: -1 })).rejects.toThrow("nonnegative");
+    await expect(store.append(chunk("one", "run-2"))).rejects.toThrow("already exists");
+    await expect(store.list("run-1", { limit: -1 })).rejects.toThrow("nonnegative");
   });
 });
 

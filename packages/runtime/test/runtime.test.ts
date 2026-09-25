@@ -270,7 +270,7 @@ test("a run routes, works, verifies, and completes with an ordered event log", a
   const streamed: string[] = [];
   for await (const event of runtime.subscribe(run.id)) streamed.push(event.payload.type);
   expect(streamed).toEqual(types);
-  expect(runtime.startRun(run.id)).rejects.toBeInstanceOf(RuntimeUsageError);
+  await expect(runtime.startRun(run.id)).rejects.toBeInstanceOf(RuntimeUsageError);
 });
 
 test("idempotent creation returns the existing run and config mismatches are rejected", async () => {
@@ -283,7 +283,9 @@ test("idempotent creation returns the existing run and config mismatches are rej
   };
   const first = await runtime.createRun(input);
   expect((await runtime.createRun(input)).id).toBe(first.id);
-  expect(runtime.createRun({ ...input, configPath: join(workspace, "other.yaml") })).rejects.toThrow("does not match");
+  await expect(runtime.createRun({ ...input, configPath: join(workspace, "other.yaml") })).rejects.toThrow(
+    "does not match",
+  );
 });
 
 test("a dirty workspace fails preflight before any worker call", async () => {
@@ -427,14 +429,14 @@ test("completion approvals pause the run and resume on a valid answer", async ()
   expect((await runtime.getRun(run.id)).status).toBe("paused");
   const [approval] = await store.listApprovals(run.id, "pending");
   expect(approval?.choices).toEqual(["retry", "review", "done", "fail"]);
-  expect(runtime.resumeRun(run.id)).rejects.toThrow("waiting for approval");
-  expect(runtime.answerApproval(approval?.id ?? "", "maybe")).rejects.toThrow("must be one of");
+  await expect(runtime.resumeRun(run.id)).rejects.toThrow("waiting for approval");
+  await expect(runtime.answerApproval(approval?.id ?? "", "maybe")).rejects.toThrow("must be one of");
 
   await runtime.answerApproval(approval?.id ?? "", "retry");
   expect((await runtime.getRun(run.id)).status).toBe("completed");
   expect(worker.requests).toHaveLength(2);
   expect((await store.getApproval(approval?.id ?? ""))?.status).toBe("answered");
-  expect(runtime.answerApproval(approval?.id ?? "", "done")).rejects.toThrow("is answered");
+  await expect(runtime.answerApproval(approval?.id ?? "", "done")).rejects.toThrow("is answered");
   expect((await store.list(run.id)).some((chunk) => chunk.source === "approval")).toBe(true);
 });
 
@@ -486,7 +488,7 @@ test("cancelling during a worker call stops the call and ends the run as cancell
   await started;
   expect((await runtime.getRun(run.id)).status).toBe("cancelled");
   expect((await eventTypes(store, run.id)).at(-1)).toBe("run.cancelled");
-  expect(runtime.pauseRun(run.id)).rejects.toThrow("is cancelled");
+  await expect(runtime.pauseRun(run.id)).rejects.toThrow("is cancelled");
   await runtime.cancelRun(run.id);
 });
 
@@ -561,7 +563,7 @@ test("a restart recovers an interrupted call without executing it again", async 
     owner: "first",
   });
   const run = await first.create();
-  expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
+  await expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
   await waitFor(() => first.worker.requests.length === 1);
   await Bun.sleep(20);
   expect((await store.getRun(run.id))?.status).toBe("running");
@@ -591,7 +593,7 @@ test("a restart after a finished call reuses its saved result", async () => {
     owner: "first",
   });
   const run = await first.create();
-  expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
+  await expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
   await waitFor(async () => (await store.listWorkerCalls(run.id)).length === 1);
   await Bun.sleep(20);
 
@@ -622,7 +624,7 @@ test("a restart after verification evidence was written does not duplicate it", 
     owner: "first",
   });
   const run = await first.create();
-  expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
+  await expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
   await waitFor(async () => (await store.list(run.id, { types: ["diff"] })).length === 1);
   await Bun.sleep(20);
 

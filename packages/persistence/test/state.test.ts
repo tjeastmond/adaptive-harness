@@ -83,8 +83,8 @@ test("migrates an existing version 1 database without replacing its run", async 
   expect(await reader.getRun(existing.id)).toEqual(existing);
   expect(await reader.listRuns()).toEqual([existing]);
   expect(await reader.listEvents(existing.id)).toEqual([existingEvent]);
-  expect(reader.list(existing.id)).rejects.toThrow("require database schema version 2");
-  expect(reader.getContextAssembly("old")).rejects.toThrow("require database schema version 2");
+  await expect(reader.list(existing.id)).rejects.toThrow("require database schema version 2");
+  await expect(reader.getContextAssembly("old")).rejects.toThrow("require database schema version 2");
   reader.close();
   const beforeMigration = new Database(databasePath, { readonly: true });
   expect((beforeMigration.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);
@@ -113,8 +113,8 @@ test("state chunks are durable, ordered by append, run scoped and bounded", asyn
   expect((await store.list("run-1", { types: ["observation"], limit: 1 })).map((item) => item.id)).toEqual(["three"]);
   expect(await store.list("run-1", { types: [] })).toEqual([]);
   expect(await store.list("run-1", { limit: 0 })).toEqual([]);
-  expect(store.list("run-1", { limit: 1001 })).rejects.toThrow("State chunk limit");
-  expect(store.append(chunk("one"))).rejects.toThrow();
+  await expect(store.list("run-1", { limit: 1001 })).rejects.toThrow("State chunk limit");
+  await expect(store.append(chunk("one"))).rejects.toThrow();
   store.close();
   const reopened = new SqliteHarnessStore(databasePath, { readonly: true });
   expect((await reopened.list("run-1")).map((item) => item.id)).toEqual(["one", "two", "three"]);
@@ -169,9 +169,9 @@ test("an older explicit candidate survives the default 500-chunk bound and repla
   for (let index = 0; index < 520; index++) await store.append(chunk(`later-${index}`));
   expect((await store.list("run-1")).some((item) => item.id === "early")).toBe(false);
   expect((await store.list("run-1", { ids: ["early"] })).map((item) => item.id)).toEqual(["early"]);
-  expect(store.list("run-1", { ids: Array.from({ length: 1_001 }, (_, index) => `id-${index}`) })).rejects.toThrow(
-    "ID filter",
-  );
+  await expect(
+    store.list("run-1", { ids: Array.from({ length: 1_001 }, (_, index) => `id-${index}`) }),
+  ).rejects.toThrow("ID filter");
   const request: ContextAssemblyRequest = {
     runId: "run-1",
     purpose: "verification",
@@ -200,7 +200,7 @@ test("recording rejects a context summary containing a configured secret", async
     purpose: "decision",
     objective: { text: "Use private credential", acceptanceCriteria: [] },
   };
-  expect(new RecordingContextAssembler(store).assemble(request)).rejects.toThrow("redacted or truncated");
+  await expect(new RecordingContextAssembler(store).assemble(request)).rejects.toThrow("redacted or truncated");
   expect(await store.listContextAssemblies("run-1")).toEqual([]);
   store.close();
 });
@@ -217,10 +217,10 @@ test("context evidence rejects a false hash and chunks from another run", async 
     renderedContentHash: createHash("sha256").update(summary).digest("hex"),
     chunks: [{ chunk: chunk("foreign", "other"), visibility: "short" }],
   };
-  expect(store.recordContextAssembly(request, { ...assembly, renderedContentHash: "false" })).rejects.toThrow(
+  await expect(store.recordContextAssembly(request, { ...assembly, renderedContentHash: "false" })).rejects.toThrow(
     "hash does not match",
   );
-  expect(store.recordContextAssembly(request, assembly, { id: "assembly-1", createdAt: now })).rejects.toThrow(
+  await expect(store.recordContextAssembly(request, assembly, { id: "assembly-1", createdAt: now })).rejects.toThrow(
     "does not belong",
   );
   expect(await store.listContextAssemblies("run-1")).toEqual([]);

@@ -115,8 +115,8 @@ test("does not follow an HTTP redirect or send the key to its destination", asyn
     },
   });
   const failure = provider.evaluate(request);
-  expect(failure).rejects.toBeInstanceOf(JevResponseError);
-  expect(failure).rejects.toThrow("HTTP 302");
+  await expect(failure).rejects.toBeInstanceOf(JevResponseError);
+  await expect(failure).rejects.toThrow("HTTP 302");
   expect(calls).toEqual(["https://api.typesafe.ai/v1/systemone"]);
 });
 
@@ -168,8 +168,8 @@ test("retries transient network errors but not 401 or malformed successful respo
     sleep: async () => undefined,
   });
   const unauthorizedFailure = unauthorized.evaluate(request);
-  expect(unauthorizedFailure).rejects.toThrow("HTTP 401");
-  expect(unauthorizedFailure).rejects.toBeInstanceOf(JevResponseError);
+  await expect(unauthorizedFailure).rejects.toThrow("HTTP 401");
+  await expect(unauthorizedFailure).rejects.toBeInstanceOf(JevResponseError);
   expect(calls).toBe(1);
   calls = 0;
   const malformed = new JevHttpProvider({
@@ -181,7 +181,7 @@ test("retries transient network errors but not 401 or malformed successful respo
     },
     sleep: async () => undefined,
   });
-  expect(malformed.evaluate(request)).rejects.toThrow("questions do not match");
+  await expect(malformed.evaluate(request)).rejects.toThrow("questions do not match");
   expect(calls).toBe(1);
 });
 
@@ -196,7 +196,7 @@ test("classifies exhausted transient HTTP errors as unavailability", async () =>
     },
     sleep: async () => undefined,
   });
-  expect(provider.evaluate(request)).rejects.toBeInstanceOf(JevUnavailableError);
+  await expect(provider.evaluate(request)).rejects.toBeInstanceOf(JevUnavailableError);
   expect(calls).toBe(2);
 });
 
@@ -210,31 +210,31 @@ test("rejects invalid typed values and oversized responses", async () => {
     apiKey: "key",
     fetch: async () => response(badProbability),
   });
-  expect(provider.evaluate(request)).rejects.toThrow("probability total");
+  await expect(provider.evaluate(request)).rejects.toThrow("probability total");
   const huge = new JevHttpProvider({
     apiKey: "key",
     fetch: async () => new Response("x".repeat(256_001)),
   });
-  expect(huge.evaluate(request)).rejects.toThrow("size limit");
+  await expect(huge.evaluate(request)).rejects.toThrow("size limit");
   const echoedKey = new JevHttpProvider({
     apiKey: "secret-key",
     fetch: async () => response(fixture({ model: "secret-key" })),
   });
-  expect(echoedKey.evaluate(request)).rejects.toThrow("Invalid Jev model");
+  await expect(echoedKey.evaluate(request)).rejects.toThrow("Invalid Jev model");
 });
 
 test("rejects choice and score values inconsistent with their distributions", async () => {
   const wrongChoice = fixture();
   ((wrongChoice.answers as Record<string, unknown>).kind as Record<string, unknown>).choice = "review";
   const choiceProvider = new JevHttpProvider({ apiKey: "key", fetch: async () => response(wrongChoice) });
-  expect(choiceProvider.evaluate(request)).rejects.toThrow("highest probability");
+  await expect(choiceProvider.evaluate(request)).rejects.toThrow("highest probability");
 
   const wrongScore = fixture();
   const score = (wrongScore.answers as Record<string, unknown>).complexity as Record<string, unknown>;
   score.score = 0;
   score.probabilities = { "0": 0, "1": 0, "2": 1 };
   const scoreProvider = new JevHttpProvider({ apiKey: "key", fetch: async () => response(wrongScore) });
-  expect(scoreProvider.evaluate(request)).rejects.toThrow("probability-weighted mean");
+  await expect(scoreProvider.evaluate(request)).rejects.toThrow("probability-weighted mean");
 
   const tiedChoice = fixture();
   const choice = (tiedChoice.answers as Record<string, unknown>).kind as Record<string, unknown>;
