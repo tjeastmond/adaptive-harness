@@ -89,6 +89,16 @@ function redact(value: string, environment: Record<string, string>): string {
   return result;
 }
 
+/** The redacted end of a failed provider's stderr, on one line, where CLIs usually explain the failure. */
+function stderrTail(stderr: string, environment: Record<string, string>): string {
+  const text = redact(stderr, environment)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips terminal escapes and control characters.
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 500 ? `…${text.slice(-500)}` : text;
+}
+
 function usageFrom(value: unknown): Usage | undefined {
   const object = record(value);
   if (!object) return;
@@ -306,7 +316,12 @@ abstract class CliWorker implements WorkerAdapter {
                         ? "Workspace Git status unavailable after worker"
                         : isReadOnly(request) && filesChanged.length
                           ? "Read-only worker changed files"
-                          : `Provider exited with code ${result.exitCode}`,
+                          : [
+                              `Provider exited with code ${result.exitCode}`,
+                              stderrTail(result.stderr, request.environment),
+                            ]
+                              .filter(Boolean)
+                              .join(": "),
             }
           : {}),
       };
