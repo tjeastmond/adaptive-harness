@@ -70,13 +70,17 @@ export interface ContextAssembly {
   renderedContentHash: string;
 }
 
+export interface StateListOptions {
+  types?: StateChunkType[];
+  ids?: StateChunkId[];
+  /** Keeps only the most recent matching chunks. */
+  limit?: number;
+}
+
 export interface StateStore {
   append(chunk: StateChunk): Promise<void>;
   get(id: StateChunkId): Promise<StateChunk | undefined>;
-  list(
-    runId: RunId,
-    options?: { types?: StateChunkType[]; ids?: StateChunkId[]; limit?: number },
-  ): Promise<StateChunk[]>;
+  list(runId: RunId, options?: StateListOptions): Promise<StateChunk[]>;
 }
 
 export interface ContextAssembler {
