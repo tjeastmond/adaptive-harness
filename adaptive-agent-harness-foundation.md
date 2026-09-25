@@ -1167,9 +1167,13 @@ function selectUnboundedAction(decision, verification, config, progress): NextAc
     return "done";
   }
 
+  if (!verification.ok && decision.nextAction === "done") return "ask-user";
+
   return decision.nextAction;
 }
 ```
+
+When verification failed, the policy never completes the run: a provider `done` becomes `ask-user` so a person can accept the result or send it back. Passing verification leaves provider `done` unchanged.
 
 `exhaustedBudget` checks steps, worker calls, input tokens, estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
 

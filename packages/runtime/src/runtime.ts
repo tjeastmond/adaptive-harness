@@ -941,6 +941,8 @@ export class LocalHarnessRuntime implements HarnessRuntime {
         { reviewCompletedForAttempt: drive.cp.reviewCompletedForAttempt, editsSinceReview: drive.cp.editsSinceReview },
       );
       reasons = [...decision.reasonCodes];
+      // Tell the person why they are asked when the provider judged failed work complete.
+      if (action === "ask-user" && !verification.ok) reasons.push("verification-failed");
     } catch (error) {
       if (!(error instanceof DecisionHandoffError)) throw error;
       action = error.action;

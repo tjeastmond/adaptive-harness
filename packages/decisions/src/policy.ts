@@ -159,5 +159,6 @@ function selectUnboundedAction(
   ) {
     return "done";
   }
+  if (!verification.ok && decision.nextAction === "done") return "ask-user";
   return decision.nextAction;
 }

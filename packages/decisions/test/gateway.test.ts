@@ -182,6 +182,9 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
   };
   const spent = { ...activeRun, budget: { ...activeRun.budget, elapsedMs: 60_000 } };
   expect(selectNextAction(satisfied, verification, spent, config, beforeReview)).toBe("done");
+  // Failed verification never completes the run, whether or not budget remains.
+  expect(selectNextAction(satisfied, { ...verification, ok: false }, spent, config, beforeReview)).toBe("ask-user");
+  expect(selectNextAction(satisfied, { ...verification, ok: false }, activeRun, config, beforeReview)).toBe("ask-user");
   expect(
     selectNextAction(
       { ...satisfied, moreWorkUseful: 0.9 },

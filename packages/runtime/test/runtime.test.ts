@@ -599,6 +599,27 @@ test("completion approvals pause the run and resume on a valid answer", async ()
   expect((await store.list(run.id)).some((chunk) => chunk.source === "approval")).toBe(true);
 });
 
+test("failed verification asks the person instead of completing on a done decision", async () => {
+  const { runtime, store, create } = harness({
+    completions: ["done"],
+    configure: (settings) => {
+      settings.verification.commands = [
+        { name: "fails", command: "sh", args: ["-c", "exit 1"], timeoutMs: 10_000, env: {} },
+      ];
+    },
+  });
+  const run = await create();
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("paused");
+  const [approval] = await store.listApprovals(run.id, "pending");
+  expect(approval?.kind).toBe("risk-acceptance");
+  expect(approval?.prompt).toContain("verification-failed");
+  expect(approval?.choices).toContain("done");
+
+  await runtime.answerApproval(approval?.id ?? "", "done");
+  expect((await runtime.getRun(run.id)).status).toBe("completed");
+});
+
 test("an approval requested with an exhausted budget offers only choices that start no work", async () => {
   const { runtime, store, create } = harness({ completions: ["ask-user"], limits: { maxWorkerCalls: 1 } });
   const run = await create();
