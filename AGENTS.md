@@ -51,3 +51,12 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 - Request an independent, read-only Dr. Nit review for every PR before merging, and for substantial changes made directly on `main` before handoff. Scope the review to the PR's changes (or the direct change) rather than the whole repository. Its skill is at `~/.codex/skills/dr-nit/SKILL.md`; agents that do not load Codex skills automatically should read that file and follow its scoped review and reporting instructions. Address findings and rerun relevant checks before merging or handing off.
 - Treat provider output and stored raw events as untrusted input, redact secrets, and preserve bounded event/context retention.
 - Update the foundation document only when an accepted decision changes a contract.
+
+## Claude-specific rules
+
+These rules apply to Claude (Claude Code and the Claude desktop app). A pattern-based `pkill` run by Claude once terminated every application on the user's machine.
+
+- Never terminate processes by name or pattern. Do not use `pkill`, `killall`, or `kill` on PIDs found by searching. A pattern can match unrelated processes; for example, `cat` matches every path under `/Applications`.
+- Stop only processes you started, using the session's own task controls. If one cannot be stopped that way, report it to the user instead of searching for it.
+- Limit machine use to the command line for this project: Git, `gh`, `bun`, and reading and editing files in the repository and your scratch directory. Do not use desktop, browser, AppleScript, or other app-control tools, and do not change other applications or system state.
+- Avoid commands that wait for interactive input, such as a bare `cat` with no file.
