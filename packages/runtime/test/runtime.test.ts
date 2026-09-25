@@ -259,7 +259,7 @@ test("a run routes, works, verifies, and completes with an ordered event log", a
   expect(finished.completedAt).toBeDefined();
   expect(finished.budget).toMatchObject({ workerCalls: 1, inputTokens: 10, outputTokens: 5 });
   expect(worker.requests).toHaveLength(1);
-  expect(worker.requests[0]?.readOnly).toBe(false);
+  expect(worker.requests[0]?.task.access.mode).toBe("write");
   expect(await statuses(store, run.id)).toEqual(["routing", "running", "verifying", "completed"]);
   const types = await eventTypes(store, run.id);
   expect(types[0]).toBe("run.created");
@@ -325,9 +325,9 @@ test("review uses a read-only agent and completes after the review", async () =>
   const run = await create();
   await runtime.startRun(run.id);
   expect((await runtime.getRun(run.id)).status).toBe("completed");
-  expect(worker.requests.map((request) => [request.agentName, request.readOnly])).toEqual([
-    ["builder", false],
-    ["reviewer", true],
+  expect(worker.requests.map((request) => [request.agentName, request.task.access.mode])).toEqual([
+    ["builder", "write"],
+    ["reviewer", "read"],
   ]);
   expect(await statuses(store, run.id)).toEqual([
     "routing",

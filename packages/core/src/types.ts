@@ -133,12 +133,12 @@ export interface FileChange {
 
 export interface WorkerRequest {
   runId: RunId;
+  /** `task.access.mode` is the only source of write permission: a `read` task runs read-only. */
   task: HarnessTask;
   agentName: string;
   instructions: string;
   workspace: string;
   model?: string;
-  readOnly: boolean;
   timeoutMs: number;
   environment: Record<string, string>;
 }

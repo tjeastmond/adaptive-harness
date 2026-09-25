@@ -693,7 +693,6 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       agentName,
       instructions: [agent.instructions, ROLE_INSTRUCTIONS[role], context.summary].join("\n\n"),
       workspace: drive.run.workspace,
-      readOnly: role === "review" || agent.readOnly,
       timeoutMs: Math.max(1, Math.min(limits.workerTimeoutMs, limits.maxElapsedMs - drive.run.budget.elapsedMs)),
       environment: this.#environment,
     };

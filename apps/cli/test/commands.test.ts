@@ -130,7 +130,8 @@ class FakeWorker implements WorkerAdapter {
     const id = `call-${crypto.randomUUID()}`;
     await emit({ type: "session.started", callId: id, at });
     await emit({ type: "message", role: "assistant", text: "writing the feature", at });
-    if (!request.readOnly) writeFileSync(join(request.workspace, `feature-${this.requests.length}.txt`), "feature\n");
+    if (request.task.access.mode === "write")
+      writeFileSync(join(request.workspace, `feature-${this.requests.length}.txt`), "feature\n");
     return {
       id,
       provider: "codex-cli",

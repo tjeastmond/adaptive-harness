@@ -41,6 +41,11 @@ const reportSchema = {
   },
 };
 
+/** Write permission comes only from the task's declared access mode. */
+function isReadOnly(request: WorkerRequest): boolean {
+  return request.task.access.mode === "read";
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -251,7 +256,7 @@ abstract class CliWorker implements WorkerAdapter {
                 parser.invalidCount === 0 &&
                 !eventLimitReached &&
                 gitValid &&
-                !(request.readOnly && filesChanged.length)
+                !(isReadOnly(request) && filesChanged.length)
               ? "succeeded"
               : "failed";
       return {
@@ -278,7 +283,7 @@ abstract class CliWorker implements WorkerAdapter {
                       ? "Provider event limit exceeded"
                       : !gitValid
                         ? "Workspace Git status unavailable after worker"
-                        : request.readOnly && filesChanged.length
+                        : isReadOnly(request) && filesChanged.length
                           ? "Read-only worker changed files"
                           : `Provider exited with code ${result.exitCode}`,
             }
@@ -302,7 +307,7 @@ export class CodexWorkerAdapter extends CliWorker {
       "exec",
       "--json",
       "--sandbox",
-      request.readOnly ? "read-only" : "workspace-write",
+      isReadOnly(request) ? "read-only" : "workspace-write",
       "--cd",
       request.workspace,
       ...(reportPath ? ["--output-schema", reportPath] : []),
@@ -328,7 +333,7 @@ export class CursorWorkerAdapter extends CliWorker {
       request.workspace,
       ...(model ? ["--model", model] : []),
       ...(this.config.extraArgs ?? []),
-      request.readOnly ? `Read-only task: do not modify files.\n${request.instructions}` : request.instructions,
+      isReadOnly(request) ? `Read-only task: do not modify files.\n${request.instructions}` : request.instructions,
     ];
   }
 }
