@@ -1187,7 +1187,7 @@ function selectUnboundedAction(decision, verification, config, progress): NextAc
 
 When verification failed, the policy never completes the run: a provider `done` becomes `ask-user` so a person can accept the result or send it back. Passing verification leaves provider `done` unchanged.
 
-A failed worker call never completes the run either. When the latest call failed, was cancelled, or was interrupted, a `done` becomes `retry` for an implementation call while the retry limit and budgets allow another attempt, and `ask-user` otherwise or for a review call. The runtime records `worker-failed` in the action's reason codes. A failed review does not count as the attempt's completed review.
+A failed worker call never completes the run either. When the latest call failed, was cancelled, or was interrupted, a `done` becomes `retry` for an implementation call while the retry limit and budgets allow another attempt, and `ask-user` otherwise or for a review call. The runtime records `worker-failed` in the reason codes of any action that follows a failed call. A failed review does not count as the attempt's completed review.
 
 `exhaustedBudget` checks steps, worker calls, input tokens, estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
 

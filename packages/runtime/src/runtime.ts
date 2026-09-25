@@ -950,7 +950,8 @@ export class LocalHarnessRuntime implements HarnessRuntime {
         },
       );
       reasons = [...decision.reasonCodes];
-      if (drive.cp.failedCall && (action === "retry" || action === "ask-user")) reasons.push("worker-failed");
+      // The policy never completes after a failed call; record why whichever action follows.
+      if (drive.cp.failedCall) reasons.push("worker-failed");
       // Tell the person why they are asked when the provider judged failed work complete.
       if (action === "ask-user" && !verification.ok) reasons.push("verification-failed");
     } catch (error) {
