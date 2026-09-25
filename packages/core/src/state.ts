@@ -5,23 +5,30 @@ import type {
   ContextAssemblyRequest,
   StateChunk,
   StateChunkId,
-  StateChunkType,
+  StateListOptions,
   StateStore,
 } from "./types.ts";
+
+type RenderedChunk = ContextAssembly["chunks"][number] & { text: string };
+
+/** The last `n` items; unlike `slice(-n)`, `n = 0` yields none. */
+function lastN<T>(items: readonly T[], n: number): T[] {
+  return n === 0 ? [] : items.slice(-n);
+}
 
 /** Keeps append order within each run and isolates callers from stored values. */
 export class InMemoryStateStore implements StateStore {
   private readonly chunks = new Map<StateChunkId, StateChunk>();
-  private readonly runIds = new Map<string, StateChunkId[]>();
+  private readonly chunkIdsByRun = new Map<string, StateChunkId[]>();
 
   async append(chunk: StateChunk): Promise<void> {
     if (!chunk.id || !chunk.runId) throw new Error("State chunks require an id and runId");
     if (this.chunks.has(chunk.id)) throw new Error(`State chunk already exists: ${chunk.id}`);
 
     this.chunks.set(chunk.id, structuredClone(chunk));
-    const ids = this.runIds.get(chunk.runId) ?? [];
+    const ids = this.chunkIdsByRun.get(chunk.runId) ?? [];
     ids.push(chunk.id);
-    this.runIds.set(chunk.runId, ids);
+    this.chunkIdsByRun.set(chunk.runId, ids);
   }
 
   async get(id: StateChunkId): Promise<StateChunk | undefined> {
@@ -29,24 +36,21 @@ export class InMemoryStateStore implements StateStore {
     return chunk === undefined ? undefined : structuredClone(chunk);
   }
 
-  async list(
-    runId: string,
-    options?: { types?: StateChunkType[]; ids?: StateChunkId[]; limit?: number },
-  ): Promise<StateChunk[]> {
+  async list(runId: string, options?: StateListOptions): Promise<StateChunk[]> {
     if (options?.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 0)) {
       throw new Error("State chunk limit must be a nonnegative integer");
     }
 
     const allowedTypes = options?.types && new Set(options.types);
     const allowedIds = options?.ids && new Set(options.ids);
-    const chunks = (this.runIds.get(runId) ?? [])
+    const chunks = (this.chunkIdsByRun.get(runId) ?? [])
       .map((id) => {
         const chunk = this.chunks.get(id);
         if (!chunk) throw new Error(`Missing state chunk: ${id}`);
         return chunk;
       })
       .filter((chunk) => (!allowedTypes || allowedTypes.has(chunk.type)) && (!allowedIds || allowedIds.has(chunk.id)));
-    const selected = options?.limit === undefined ? chunks : options.limit === 0 ? [] : chunks.slice(-options.limit);
+    const selected = options?.limit === undefined ? chunks : lastN(chunks, options.limit);
     return selected.map((chunk) => structuredClone(chunk));
   }
 }
@@ -80,39 +84,40 @@ export class DeterministicContextAssembler implements ContextAssembler {
     );
     const candidateIds = request.candidateChunkIds && new Set(request.candidateChunkIds);
     const eligible = candidates.filter((chunk) => !candidateIds || candidateIds.has(chunk.id));
-    const selected = this.maxChunks === 0 ? [] : eligible.slice(-this.maxChunks).reverse();
     const objective = [
       "OBJECTIVE",
       request.objective.text,
       "ACCEPTANCE CRITERIA",
       ...request.objective.acceptanceCriteria.map((criterion) => `- ${criterion}`),
-    ].join("\n");
-    const boundedObjective = objective.slice(0, this.maxCharacters);
-    let remaining = this.maxCharacters - boundedObjective.length;
-    const renderedChunks: Array<{ selected: ContextAssembly["chunks"][number]; text: string }> = [];
+    ]
+      .join("\n")
+      .slice(0, this.maxCharacters);
+    const rendered = this.fit(lastN(eligible, this.maxChunks).reverse(), this.maxCharacters - objective.length);
+    const summary = objective + rendered.map(({ text }) => text).join("");
 
-    for (const chunk of selected) {
+    return {
+      chunks: rendered.map(({ chunk, visibility }) => ({ chunk, visibility })),
+      summary,
+      renderedContentHash: createHash("sha256").update(summary).digest("hex"),
+    };
+  }
+
+  /** Renders newest-first chunks into `budget` characters, stopping at the first truncated one; returns append order. */
+  private fit(newestFirst: StateChunk[], budget: number): RenderedChunk[] {
+    let remaining = budget;
+    const rendered: RenderedChunk[] = [];
+    for (const chunk of newestFirst) {
       const heading = `\n\nSTATE CHUNK ${chunk.id} (${chunk.type}; ${chunk.source})\n`;
       if (heading.length >= remaining) break;
       const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
       if (content === undefined) throw new Error(`State chunk has no renderable content: ${chunk.id}`);
-      const rendered = content.slice(0, remaining - heading.length);
-      const text = heading + rendered;
+      const body = content.slice(0, remaining - heading.length);
+      const truncated = body.length < content.length;
+      const text = heading + body;
       remaining -= text.length;
-      renderedChunks.push({
-        selected: { chunk, visibility: rendered.length < content.length ? "short" : "full" },
-        text,
-      });
-      if (rendered.length < content.length) break;
+      rendered.push({ chunk, visibility: truncated ? "short" : "full", text });
+      if (truncated) break;
     }
-
-    renderedChunks.reverse();
-    const summary = boundedObjective + renderedChunks.map(({ text }) => text).join("");
-
-    return {
-      chunks: renderedChunks.map(({ selected }) => selected),
-      summary,
-      renderedContentHash: createHash("sha256").update(summary).digest("hex"),
-    };
+    return rendered.reverse();
   }
 }

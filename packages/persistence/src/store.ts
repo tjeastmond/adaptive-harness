@@ -14,7 +14,7 @@ import type {
   HarnessTask,
   RunStatus,
   StateChunk,
-  StateChunkType,
+  StateListOptions,
   StateStore,
   WorkerResult,
 } from "@adaptive-harness/core";
@@ -547,10 +547,7 @@ export class SqliteHarnessStore implements StateStore {
     return row ? parse<StateChunk>(row.data) : undefined;
   }
 
-  async list(
-    runId: string,
-    options: { types?: StateChunkType[]; ids?: string[]; limit?: number } = {},
-  ): Promise<StateChunk[]> {
+  async list(runId: string, options: StateListOptions = {}): Promise<StateChunk[]> {
     this.#requireStateSchema();
     const limit = options.limit ?? 500;
     if (!Number.isSafeInteger(limit) || limit < 0 || limit > 1_000) {
