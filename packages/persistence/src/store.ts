@@ -6,6 +6,7 @@ import type {
   ContextAssembly,
   ContextAssemblyRequest,
   ContextVisibility,
+  DecisionPhase,
   DecisionQuestion,
   DecisionResponse,
   HarnessRun,
@@ -22,7 +23,7 @@ export interface DecisionRecord {
   id: string;
   runId: string;
   createdAt: string;
-  phase: "route" | "completion" | "handoff" | "context";
+  phase: DecisionPhase;
   requestStateHash: string;
   questions?: Record<string, DecisionQuestion>;
   response?: DecisionResponse;

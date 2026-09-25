@@ -1,4 +1,5 @@
 import type {
+  DecisionPhase,
   DecisionResponse,
   HarnessRun,
   NextAction,
@@ -16,11 +17,7 @@ import type { ApprovalRequest } from "./runtime.ts";
 export type HarnessEvent =
   | { type: "run.created"; run: HarnessRun }
   | { type: "run.status-changed"; runId: RunId; from: RunStatus; to: RunStatus }
-  | {
-      type: "decision.requested";
-      runId: RunId;
-      phase: "route" | "completion" | "handoff" | "context";
-    }
+  | { type: "decision.requested"; runId: RunId; phase: DecisionPhase }
   | { type: "decision.completed"; runId: RunId; decision: DecisionResponse }
   | { type: "decision.bypassed"; runId: RunId; reason: string }
   | { type: "worker.started"; runId: RunId; taskId: TaskId; callId: WorkerCallId }

@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DecisionProvider, HarnessRun } from "@adaptive-harness/core";
-import { DeterministicDecisionProvider, routeRequest } from "@adaptive-harness/decisions";
+import { type DecisionContext, DeterministicDecisionProvider, routeRequest } from "@adaptive-harness/decisions";
 import { SqliteHarnessStore } from "@adaptive-harness/persistence";
+import type { HarnessEvent } from "@adaptive-harness/protocol";
 import { createPersistentDecisionGateway } from "../src/decision-gateway.ts";
 
 const now = "2026-09-23T12:00:00.000Z";
@@ -80,4 +81,24 @@ test("runtime gateway persists Jev and bypass audit while emitting bypass events
     store.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("every gateway decision phase can be reported as a decision.requested event", () => {
+  const phases = [
+    "route",
+    "completion",
+    "handoff",
+    "context",
+    "tool",
+    "permission",
+    "delegation",
+  ] as const satisfies readonly DecisionContext["phase"][];
+  // Type-level: fails to compile if any gateway phase cannot be carried by the event.
+  const requested = (phase: DecisionContext["phase"]): HarnessEvent => ({
+    type: "decision.requested",
+    runId: run.id,
+    phase,
+  });
+  const events = phases.map(requested);
+  expect(events.map((event) => (event.type === "decision.requested" ? event.phase : undefined))).toEqual([...phases]);
 });

@@ -12,6 +12,9 @@ export type RunStatus =
 
 export type NextAction = "done" | "retry" | "verify" | "review" | "research" | "ask-user" | "fail";
 
+/** Every decision the DecisionGateway can evaluate, and report through `decision.requested`. */
+export type DecisionPhase = "route" | "completion" | "handoff" | "context" | "tool" | "permission" | "delegation";
+
 export type AgentPurpose = "implementation" | "research" | "review";
 
 export interface Objective {
