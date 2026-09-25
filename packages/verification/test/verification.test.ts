@@ -128,6 +128,29 @@ describe("runVerificationCommands", () => {
     expect(result.commands[0]?.args).toContain("[REDACTED]");
   });
 
+  test("removes withheld variables from inherited and configured environments", async () => {
+    const dir = await fixture();
+    process.env.HARNESS_VERIFICATION_TEST_JEV = "jev-secret";
+    try {
+      const print =
+        "console.log([process.env.HARNESS_VERIFICATION_TEST_JEV, process.env.HARNESS_VERIFICATION_TEST_GIVEN, process.env.HARNESS_VERIFICATION_TEST_KEPT].join('|'))";
+      const result = await runVerificationCommands(
+        [
+          command("env", "bun", ["-e", print], {
+            HARNESS_VERIFICATION_TEST_GIVEN: "given",
+            HARNESS_VERIFICATION_TEST_KEPT: "kept",
+          }),
+        ],
+        dir,
+        { withheldEnvironment: ["HARNESS_VERIFICATION_TEST_JEV", "HARNESS_VERIFICATION_TEST_GIVEN"] },
+      );
+      // Configured values are redacted from output, so the kept value appears redacted.
+      expect(result.commands[0]?.stdout.trim()).toBe("||[REDACTED]");
+    } finally {
+      delete process.env.HARNESS_VERIFICATION_TEST_JEV;
+    }
+  });
+
   test("redacts inherited named environment values and reports cancellation", async () => {
     const dir = await fixture();
     const controller = new AbortController();
