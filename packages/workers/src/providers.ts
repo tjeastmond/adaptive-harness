@@ -244,6 +244,15 @@ abstract class CliWorker implements WorkerAdapter {
         onStdout: (chunk) => parser.write(chunk),
       });
       await parser.finish();
+      // Providers embed whole files in some events (Cursor's edit results), so a dropped line is not a failure.
+      if (parser.oversizedCount) {
+        await emitSafe({
+          type: "message",
+          role: "system",
+          text: `Skipped ${parser.oversizedCount} provider output line(s) over ${parser.maxLineBytes} bytes`,
+          at: new Date().toISOString(),
+        });
+      }
       const git = await gitStatus();
       const gitValid = git.status === "exited" && git.exitCode === 0 && !git.truncated;
       const beforeEntries = new Set(before.stdout.split("\0").filter(Boolean));
