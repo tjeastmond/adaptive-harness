@@ -340,6 +340,8 @@ test("verification commands never see the Jev API key", async () => {
     ["jev-key-withheld", 0],
     ["other-env-kept", 0],
   ]);
+});
+
 test("a dry run records its plan and completes without assigning work", async () => {
   const { runtime, store, worker, create } = harness();
   const run = await create({ dryRun: true });

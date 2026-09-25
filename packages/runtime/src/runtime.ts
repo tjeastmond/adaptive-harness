@@ -606,7 +606,8 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     }
     if (drive.run.dryRun) {
       const plan: RunPlan = { decisionId: response.id, route };
-      if (selected === "ask-user") return this.#plan(drive, { ...plan, unresolved: { reason: "requirements-unclear" } });
+      if (selected === "ask-user")
+        return this.#plan(drive, { ...plan, unresolved: { reason: "requirements-unclear" } });
       return this.#plan(drive, { ...plan, ...(await this.#planAgent(selected)) });
     }
     if (selected === "ask-user") {
