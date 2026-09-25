@@ -439,7 +439,7 @@ export class SqliteHarnessStore implements StateStore {
       }
       if (commit.approval) {
         if (commit.approval.runId !== runId) throw new Error("Committed approval does not match lease");
-        this.#db
+        const result = this.#db
           .query(
             `INSERT INTO approvals(id, run_id, status, created_at, data) VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data
@@ -452,6 +452,8 @@ export class SqliteHarnessStore implements StateStore {
             commit.approval.createdAt,
             json(commit.approval, this.#options),
           );
+        // An approval's run and creation time are immutable; a mismatched update must not vanish silently.
+        if (result.changes === 0) throw new Error(`Approval ${commit.approval.id} belongs to a different request`);
       }
       for (const kind of commit.clearControls ?? []) {
         const column = kind === "pause" ? "pause_requested" : "cancel_requested";

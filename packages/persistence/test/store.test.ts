@@ -223,3 +223,55 @@ test("stored event JSON redacts credential keys and secret values and enforces a
   expect(await store.listEvents("run-1")).toHaveLength(1);
   store.close();
 });
+
+test("run commits are fenced by the lease owner and apply atomically", async () => {
+  const store = new SqliteHarnessStore(databasePath());
+  await store.createRun(run());
+  const later = "2026-09-23T12:01:00.000Z";
+  expect(await store.acquireRunLease("run-1", "a", now, now)).toBe(true);
+  expect(await store.acquireRunLease("run-1", "b", now, now)).toBe(false);
+  expect(store.commitRun("run-1", "b", { checkpoint: { phase: "work" } })).rejects.toThrow("lease is not held");
+  await store.requestRunControl("run-1", "pause");
+  await store.commitRun("run-1", "a", {
+    run: { ...run(), status: "paused", updatedAt: later },
+    checkpoint: { phase: "work" },
+    events: [event(1)],
+    clearControls: ["pause"],
+  });
+  expect(await store.getRunControl("run-1")).toMatchObject({
+    owner: "a",
+    pauseRequested: false,
+    checkpoint: { phase: "work" },
+  });
+  expect(store.commitRun("run-1", "a", { checkpoint: { phase: "verify" }, events: [event(3)] })).rejects.toThrow(
+    "must be 2",
+  );
+  expect((await store.getRunControl("run-1"))?.checkpoint).toEqual({ phase: "work" });
+  expect(await store.acquireRunLease("run-1", "b", later, later)).toBe(true);
+  store.close();
+});
+
+test("approval updates keep their run and creation time or fail loudly", async () => {
+  const store = new SqliteHarnessStore(databasePath());
+  await store.createRun(run());
+  await store.acquireRunLease("run-1", "owner", now, now);
+  const approval = {
+    id: "approval-1",
+    runId: "run-1",
+    kind: "clarification" as const,
+    prompt: "Which file?",
+    status: "pending" as const,
+    createdAt: now,
+  };
+  await store.commitRun("run-1", "owner", { approval });
+  expect(
+    store.commitRun("run-1", "owner", {
+      approval: { ...approval, status: "answered", createdAt: "2026-09-23T12:05:00.000Z" },
+    }),
+  ).rejects.toThrow("different request");
+  expect((await store.getApproval("approval-1"))?.status).toBe("pending");
+  await store.commitRun("run-1", "owner", { approval: { ...approval, status: "answered", answer: "a.ts" } });
+  expect(await store.listApprovals("run-1", "answered")).toEqual([{ ...approval, status: "answered", answer: "a.ts" }]);
+  expect(await store.listApprovals("run-1", "pending")).toEqual([]);
+  store.close();
+});
