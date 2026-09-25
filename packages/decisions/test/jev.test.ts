@@ -223,6 +223,34 @@ test("rejects invalid typed values and oversized responses", async () => {
   await expect(echoedKey.evaluate(request)).rejects.toThrow("Invalid Jev model");
 });
 
+test("accepts five-point scores within the rounding error of two-decimal probabilities", async () => {
+  const fivePoint: DecisionRequest = {
+    state: "A focused coding objective",
+    questions: {
+      risk: { type: "score", instructions: "Rate risk", criteria: ["None", "Low", "Medium", "High", "Severe"] },
+    },
+  };
+  // Probabilities from the live API. Their rounded mean is 0.78; the score comes from the unrounded values.
+  const answer = (score: number) =>
+    response({
+      model: "jev-1.13.0",
+      answers: {
+        risk: {
+          type: "score",
+          score,
+          legend: { "0": "None", "1": "Low", "2": "Medium", "3": "High", "4": "Severe" },
+          probabilities: { "0": 0.35, "1": 0.53, "2": 0.11, "3": 0.01, "4": 0 },
+          confidence: 0.58,
+        },
+      },
+      usage: { input_tokens: 24, output_tokens: 13 },
+    });
+  const rounded = new JevHttpProvider({ apiKey: "key", fetch: async () => answer(0.82) });
+  expect((await rounded.evaluate(fivePoint)).answers.risk).toMatchObject({ type: "score", score: 0.82 });
+  const drifted = new JevHttpProvider({ apiKey: "key", fetch: async () => answer(0.85) });
+  await expect(drifted.evaluate(fivePoint)).rejects.toThrow("probability-weighted mean");
+});
+
 test("rejects choice and score values inconsistent with their distributions", async () => {
   const wrongChoice = fixture();
   ((wrongChoice.answers as Record<string, unknown>).kind as Record<string, unknown>).choice = "review";
