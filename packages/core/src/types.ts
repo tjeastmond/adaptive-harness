@@ -12,6 +12,9 @@ export type RunStatus =
 
 export type NextAction = "done" | "retry" | "verify" | "review" | "research" | "ask-user" | "fail";
 
+/** The decision engine: Jev, or the deterministic policy that is an explicit, observable bypass. */
+export type DecisionMode = "jev" | "deterministic";
+
 /** Every decision the DecisionGateway can evaluate, and report through `decision.requested`. */
 export type DecisionPhase = "route" | "completion" | "handoff" | "context" | "tool" | "permission" | "delegation";
 
@@ -240,7 +243,7 @@ export interface DecisionResponse {
 }
 
 export interface DecisionProvider {
-  readonly kind: "jev" | "deterministic";
+  readonly kind: DecisionMode;
   preflight(): Promise<ProviderPreflight>;
   evaluate(request: DecisionRequest): Promise<DecisionResponse>;
 }
