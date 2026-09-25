@@ -6,6 +6,7 @@ import type {
   ContextAssembly,
   ContextAssemblyRequest,
   ContextVisibility,
+  DecisionMode,
   DecisionPhase,
   DecisionQuestion,
   DecisionResponse,
@@ -27,8 +28,8 @@ export interface DecisionRecord {
   requestStateHash: string;
   questions?: Record<string, DecisionQuestion>;
   response?: DecisionResponse;
-  requestedMode?: "jev" | "deterministic";
-  selectedMode?: "jev" | "deterministic";
+  requestedMode?: DecisionMode;
+  selectedMode?: DecisionMode;
   fallbackReason?: string;
   previousResponse?: DecisionResponse;
   errorCode?: string;

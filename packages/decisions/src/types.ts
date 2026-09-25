@@ -1,6 +1,6 @@
-import type { DecisionId, DecisionPhase, DecisionRequest, DecisionResponse, RunId } from "@adaptive-harness/core";
+import type { DecisionMode, DecisionPhase, DecisionRequest, DecisionResponse, RunId } from "@adaptive-harness/core";
 
-export type DecisionMode = "jev" | "deterministic";
+export type { DecisionMode };
 
 export interface DecisionContext {
   runId: RunId;
@@ -15,5 +15,3 @@ export interface DecisionGateway {
 
 /** Default decision engine; deterministic mode is an explicit bypass only. */
 export const DEFAULT_DECISION_MODE: DecisionMode = "jev";
-
-export type { DecisionId };
