@@ -43,6 +43,9 @@ const MAX_RESPONSE_BYTES = 256_000;
 const MAX_STATE_CHARACTERS = 32_000;
 const MAX_QUESTIONS = 32;
 const MAX_RAW_STRING = 16_000;
+/** Jev reports probabilities to two decimals, so each may be off by up to half a hundredth. */
+const PROBABILITY_ROUNDING = 0.005;
+const MIN_TOLERANCE = 0.02;
 
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -69,7 +72,8 @@ function validateProbabilities(value: unknown, expectedKeys: string[]): Record<s
     if (!finiteBetween(probability, 0, 1)) throw new Error("Invalid Jev probability value");
     total += probability;
   }
-  if (Math.abs(total - 1) > 0.02) throw new Error("Invalid Jev probability total");
+  const totalTolerance = Math.max(MIN_TOLERANCE, PROBABILITY_ROUNDING * expectedKeys.length);
+  if (Math.abs(total - 1) > totalTolerance + Number.EPSILON) throw new Error("Invalid Jev probability total");
   return probabilities as Record<string, number>;
 }
 function validateAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer {
@@ -108,7 +112,10 @@ function validateAnswer(value: unknown, question: DecisionQuestion): DecisionAns
   }
   const probabilities = validateProbabilities(answer.probabilities, keys);
   const weightedScore = keys.reduce((sum, key, index) => sum + index * (probabilities[key] ?? 0), 0);
-  if (Math.abs(answer.score - weightedScore) > 0.02) {
+  // Jev computes the score from unrounded probabilities; rounding error grows with each criterion's index.
+  const indexTotal = keys.reduce((sum, _, index) => sum + index, 0);
+  const scoreTolerance = Math.max(MIN_TOLERANCE, PROBABILITY_ROUNDING * (indexTotal + 1));
+  if (Math.abs(answer.score - weightedScore) > scoreTolerance + Number.EPSILON) {
     throw new Error("Jev score does not match probability-weighted mean");
   }
   return {
