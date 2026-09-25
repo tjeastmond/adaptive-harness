@@ -6,6 +6,8 @@ export interface CreateRunInput {
   workspace: string;
   configPath: string;
   idempotencyKey?: string;
+  /** Stop after the route decision and record the plan without assigning work. */
+  dryRun?: boolean;
 }
 
 export interface ApprovalRequest {

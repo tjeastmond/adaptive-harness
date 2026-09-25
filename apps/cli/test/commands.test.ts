@@ -192,6 +192,33 @@ test("run streams events and reports a completed run", async () => {
   expect(types.at(-1)).toBe("run.completed");
 });
 
+test("run --dry-run reports the plan without calling a worker", async () => {
+  const { configPath } = fixture();
+  const worker = new FakeWorker();
+  const result = await cli(["run", "Add a feature file", "--dry-run", "--config", configPath], {
+    jev: fakeJev(["done"]),
+    workers: { fake: worker },
+  });
+  expect(result.stderr).toBe("");
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("started as a dry run");
+  expect(result.stdout).toMatch(/Run run-[\w-]+: completed \(dry run\)/);
+  expect(result.stdout).toMatch(/Plan: \w+ task -> agent \w+ \(write access\), fake ready/);
+  expect(worker.requests).toHaveLength(0);
+
+  const listed = await cli(["runs", "list", "--config", configPath]);
+  expect(listed.stdout).toContain("completed (dry run)");
+
+  const json = await cli(["run", "Add a feature file", "--dry-run", "--json", "--config", configPath], {
+    jev: fakeJev(["done"]),
+    workers: { fake: worker },
+  });
+  const parsed = JSON.parse(json.stdout);
+  expect(parsed.run).toMatchObject({ status: "completed", dryRun: true });
+  expect(parsed.plan).toMatchObject({ access: "write", provider: { name: "fake", preflight: { ok: true } } });
+  expect(worker.requests).toHaveLength(0);
+});
+
 test("run pauses for an approval that approvals answer resolves", async () => {
   const { configPath } = fixture();
   const overrides = { jev: fakeJev(["ask-user", "done"]), workers: { fake: new FakeWorker() } };
@@ -332,7 +359,7 @@ test("invalid arguments are usage errors", async () => {
   const { configPath } = fixture();
   expect((await cli(["run", "--config", configPath])).code).toBe(2);
   expect((await cli(["run", "x", "--decision-mode", "fast", "--config", configPath])).code).toBe(2);
-  expect((await cli(["run", "x", "--dry-run"])).code).toBe(2);
+  expect((await cli(["run", "x", "--verbose"])).code).toBe(2);
   expect((await cli(["runs", "watch", "run-1", "--after", "-1"])).code).toBe(2);
   expect((await cli(["approvals", "list"])).code).toBe(2);
   expect((await cli(["pause"])).code).toBe(2);

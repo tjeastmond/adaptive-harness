@@ -704,6 +704,7 @@ export type HarnessEvent =
   | { type: "run.paused"; runId: RunId; reason: string }
   | { type: "run.resumed"; runId: RunId }
   | { type: "run.cancelled"; runId: RunId; reason?: string }
+  | { type: "run.planned"; runId: RunId; plan: RunPlan }
   | { type: "run.completed"; run: HarnessRun }
   | { type: "run.failed"; run: HarnessRun; error: string };
 
@@ -1226,7 +1227,7 @@ bun run src/cli.ts run "Add cursor pagination to the users endpoint" \
   --workspace ../target-repository
 ```
 
-`--dry-run` performs config validation, provider preflight, Git checks, and the Jev route decision, but does not invoke a writing worker. `--decision-mode deterministic` is an explicit emergency or comparison override and must be recorded in the event stream.
+`--dry-run` performs config validation, provider preflight, Git checks, and the Jev route decision, but does not invoke a writing worker. A dry run is persisted like any other run with `dryRun: true`: it stops after the route decision, records the plan (route, selected agent, access mode, and that agent's provider preflight) as a `run.planned` event and a `plan` state chunk, and ends as `completed`. When routing would need a person, the plan records why instead of requesting an approval. `--decision-mode deterministic` is an explicit emergency or comparison override and must be recorded in the event stream.
 
 ## 16. Implementation milestones
 

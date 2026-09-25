@@ -15,7 +15,7 @@ import { openLocalRuntime } from "./runtime.ts";
 
 const USAGE = `Usage:
   harness config validate [--config path]
-  harness run <objective> [--config path] [--workspace path] [--decision-mode jev|deterministic] [--json]
+  harness run <objective> [--config path] [--workspace path] [--decision-mode jev|deterministic] [--dry-run] [--json]
   harness runs list [--config path] [--limit number] [--json]
   harness runs show <run-id> [--config path] [--events] [--after sequence] [--limit number] [--json]
   harness runs watch <run-id> [--config path] [--after sequence] [--json]

@@ -13,10 +13,10 @@ test("terminal statuses have no exits and active statuses can always stop", () =
   }
 });
 
-test("runs complete only after verification or an approved pause", () => {
+test("runs complete only after verification, an approved pause, or a dry run's routing", () => {
   const into = Object.entries(RUN_TRANSITIONS)
     .filter(([, targets]) => targets.includes("completed"))
     .map(([from]) => from);
-  expect(into.sort()).toEqual(["paused", "verifying"]);
+  expect(into.sort()).toEqual(["paused", "routing", "verifying"]);
   expect(canTransition("created", "running")).toBe(false);
 });

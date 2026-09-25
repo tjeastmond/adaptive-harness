@@ -4,6 +4,7 @@ import type {
   HarnessRun,
   NextAction,
   RunId,
+  RunPlan,
   RunStatus,
   TaskId,
   VerificationResult,
@@ -30,6 +31,7 @@ export type HarnessEvent =
   | { type: "run.paused"; runId: RunId; reason: string }
   | { type: "run.resumed"; runId: RunId }
   | { type: "run.cancelled"; runId: RunId; reason?: string }
+  | { type: "run.planned"; runId: RunId; plan: RunPlan }
   | { type: "run.completed"; run: HarnessRun }
   | { type: "run.failed"; run: HarnessRun; error: string };
 
