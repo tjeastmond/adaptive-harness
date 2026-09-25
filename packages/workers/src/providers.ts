@@ -153,7 +153,8 @@ abstract class CliWorker implements WorkerAdapter {
       const type = object?.type;
       const at = new Date().toISOString();
       const payload = record(object?.item) ?? record(object?.message) ?? object;
-      const idValue = safeString(object?.thread_id ?? object?.session_id ?? object?.sessionId, 200);
+      const rawId = safeString(object?.thread_id ?? object?.session_id ?? object?.sessionId, 200);
+      const idValue = rawId ? redact(rawId, request.environment) : undefined;
       if (idValue && !sessionId) {
         sessionId = idValue;
         await emitSafe({ type: "session.started", sessionId, at });
@@ -178,7 +179,8 @@ abstract class CliWorker implements WorkerAdapter {
         return;
       }
       if (type === "tool_call" || payload?.type === "command_execution") {
-        await emitSafe({ type: "tool.started", name: safeString(payload?.name ?? payload?.type, 100) ?? "tool", at });
+        const name = safeString(payload?.name ?? payload?.type, 100) ?? "tool";
+        await emitSafe({ type: "tool.started", name: redact(name, request.environment), at });
         return;
       }
       const raw = redact(JSON.stringify(value), request.environment).slice(0, 4000);
@@ -194,6 +196,22 @@ abstract class CliWorker implements WorkerAdapter {
           maxCaptureBytes: 64_000,
         });
       const before = await gitStatus();
+      const cleanWorkspace = before.status === "exited" && before.exitCode === 0 && !before.truncated && !before.stdout;
+      if (!cleanWorkspace) {
+        return {
+          id,
+          provider: this.kind,
+          status: "failed",
+          startedAt: new Date(started).toISOString(),
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - started,
+          exitCode: null,
+          finalOutput: "",
+          usage: {},
+          rawEventCount: 0,
+          error: "Workspace Git status unavailable or not clean",
+        };
+      }
       if (this.kind === "codex-cli") {
         temp = await mkdtemp(join(tmpdir(), "harness-worker-"));
         await writeFile(join(temp, "report-schema.json"), JSON.stringify(reportSchema), { mode: 0o600 });
@@ -209,19 +227,17 @@ abstract class CliWorker implements WorkerAdapter {
       });
       await parser.finish();
       const git = await gitStatus();
-      const previous = new Set(before.stdout.split("\0"));
-      const filesChanged =
-        git.exitCode === 0
-          ? git.stdout
-              .split("\0")
-              .filter(Boolean)
-              .filter((line) => !previous.has(line))
-              .slice(0, 100)
-              .map((line) => ({
-                path: line.slice(3),
-                status: line.startsWith("??") ? ("added" as const) : ("unknown" as const),
-              }))
-          : [];
+      const gitValid = git.status === "exited" && git.exitCode === 0 && !git.truncated;
+      const filesChanged = gitValid
+        ? git.stdout
+            .split("\0")
+            .filter(Boolean)
+            .slice(0, 100)
+            .map((line) => ({
+              path: line.slice(3),
+              status: line.startsWith("??") ? ("added" as const) : ("unknown" as const),
+            }))
+        : [];
       if (report) report.filesChanged = filesChanged;
       const status =
         result.status === "timed-out"
@@ -232,6 +248,7 @@ abstract class CliWorker implements WorkerAdapter {
                 result.exitCode === 0 &&
                 parser.invalidCount === 0 &&
                 !eventLimitReached &&
+                gitValid &&
                 !(request.readOnly && filesChanged.length)
               ? "succeeded"
               : "failed";
@@ -257,9 +274,11 @@ abstract class CliWorker implements WorkerAdapter {
                     ? "Invalid provider JSONL"
                     : eventLimitReached
                       ? "Provider event limit exceeded"
-                      : request.readOnly && filesChanged.length
-                        ? "Read-only worker changed files"
-                        : `Provider exited with code ${result.exitCode}`,
+                      : !gitValid
+                        ? "Workspace Git status unavailable after worker"
+                        : request.readOnly && filesChanged.length
+                          ? "Read-only worker changed files"
+                          : `Provider exited with code ${result.exitCode}`,
             }
           : {}),
       };

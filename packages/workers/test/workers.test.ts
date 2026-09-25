@@ -8,7 +8,9 @@ const dirs: string[] = [];
 async function fixture(mode: string, version = "fake-agent 1.0") {
   const dir = await mkdtemp("/private/tmp/harness-worker-test-");
   dirs.push(dir);
-  const command = join(dir, "fake-agent");
+  const git = Bun.spawn(["git", "init", "-q", dir], { stdout: "ignore", stderr: "ignore" });
+  expect(await git.exited).toBe(0);
+  const command = join(dir, ".git", "fake-agent");
   await writeFile(
     command,
     `#!/usr/bin/env bun
@@ -21,15 +23,14 @@ if (${JSON.stringify(mode)} === "timeout") await new Promise((resolve) => setTim
 if (${JSON.stringify(mode)} === "invalid") { console.log("{invalid"); process.exit(0); }
 if (${JSON.stringify(mode)} === "exit") { console.error("failure"); process.exit(7); }
 if (${JSON.stringify(mode)} === "write") writeFileSync(${JSON.stringify(join(dir, "worker-change.txt"))}, "changed");
+if (${JSON.stringify(mode)} === "callback") { writeFileSync(${JSON.stringify(join(dir, ".git", "pid"))}, String(process.pid)); console.log("event"); await new Promise((resolve) => setTimeout(resolve, 30_000)); }
 if (${JSON.stringify(mode)} === "oversize") { console.log(JSON.stringify({type:"unknown",payload:"x".repeat(100_000)})); process.exit(0); }
-if (${JSON.stringify(mode)} === "secret") console.log(JSON.stringify({type:"unknown",value:"secret-value"}));
-console.log(JSON.stringify({type:"thread.started",thread_id:"session-1"}));
+if (${JSON.stringify(mode)} === "secret") { console.log(JSON.stringify({type:"unknown",value:"secret-value"})); console.log(JSON.stringify({type:"tool_call",item:{name:"secret-value"}})); }
+console.log(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(mode)} === "secret" ? "secret-value" : "session-1"}));
 console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify({summary:${JSON.stringify(mode)} === "secret" ? "secret-value" : "done",completed:true,filesChanged:[],checksRun:[],concerns:[]})}}));
 `,
   );
   await chmod(command, 0o755);
-  const git = Bun.spawn(["git", "init", "-q", dir], { stdout: "ignore", stderr: "ignore" });
-  expect(await git.exited).toBe(0);
   return { dir, command };
 }
 function request(dir: string): WorkerRequest {
@@ -113,6 +114,8 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     });
     expect(JSON.stringify({ result, events })).not.toContain("secret-value");
     expect(result.report?.summary).toBe("[REDACTED]");
+    expect(result.sessionId).toBe("[REDACTED]");
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool.started", name: "[REDACTED]" }));
   });
 
   test("rejects an oversized JSONL event", async () => {
@@ -129,6 +132,37 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Read-only worker changed files");
     expect(result.report?.filesChanged).toContainEqual({ path: "worker-change.txt", status: "added" });
+  });
+
+  test("fails closed on a dirty workspace before invoking the worker", async () => {
+    const { dir, command } = await fixture("ok");
+    const tracked = join(dir, "tracked.txt");
+    await writeFile(tracked, "original");
+    expect(
+      await Bun.spawn(["git", "-C", dir, "add", "tracked.txt"], { stdout: "ignore", stderr: "ignore" }).exited,
+    ).toBe(0);
+    expect(
+      await Bun.spawn(
+        [
+          "git",
+          "-C",
+          dir,
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "-qm",
+          "test: fixture",
+        ],
+        { stdout: "ignore", stderr: "ignore" },
+      ).exited,
+    ).toBe(0);
+    await writeFile(tracked, "modified before worker");
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("Workspace Git status unavailable or not clean");
+    await expect(readFile(join(dir, ".git", "args.json"), "utf8")).rejects.toThrow();
   });
 });
 
@@ -156,4 +190,20 @@ test("process runner reports a missing executable without leaking a system error
   const result = await runProcess({ command: ["/definitely/missing/binary"], timeoutMs: 100 });
   expect(result.status).toBe("spawn-error");
   expect(result.error).toBe("Could not start process");
+});
+
+test("process runner kills and reaps a child when a stdout callback throws", async () => {
+  const { dir, command } = await fixture("callback");
+  await expect(
+    runProcess({
+      command: [command],
+      cwd: dir,
+      timeoutMs: 5000,
+      onStdout: () => {
+        throw new Error("event sink failed");
+      },
+    }),
+  ).rejects.toThrow("event sink failed");
+  const pid = Number(await readFile(join(dir, ".git", "pid"), "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
 });

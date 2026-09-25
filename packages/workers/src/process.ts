@@ -54,7 +54,11 @@ export async function runProcess(options: ProcessOptions): Promise<ProcessResult
       if (process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
       else child.kill("SIGKILL");
     } catch {
-      child.kill("SIGKILL");
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* process already exited */
+      }
     }
   };
   const timer = setTimeout(() => terminate("timed-out"), options.timeoutMs);
@@ -79,9 +83,9 @@ export async function runProcess(options: ProcessOptions): Promise<ProcessResult
     }
     return output;
   };
+  const stdout = capture(child.stdout as ReadableStream<Uint8Array>, options.onStdout);
+  const stderr = capture(child.stderr as ReadableStream<Uint8Array>);
   try {
-    const stdout = capture(child.stdout as ReadableStream<Uint8Array>, options.onStdout);
-    const stderr = capture(child.stderr as ReadableStream<Uint8Array>);
     const stdin = child.stdin;
     if (stdin && typeof stdin !== "number") {
       if (options.stdin) stdin.write(options.stdin);
@@ -89,6 +93,10 @@ export async function runProcess(options: ProcessOptions): Promise<ProcessResult
     }
     const [out, err, exitCode] = await Promise.all([stdout, stderr, child.exited]);
     return { exitCode, status, stdout: out, stderr: err, truncated };
+  } catch (error) {
+    terminate("cancelled");
+    await Promise.allSettled([stdout, stderr, child.exited]);
+    throw error;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);
