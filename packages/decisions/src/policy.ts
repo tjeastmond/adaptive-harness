@@ -34,6 +34,10 @@ export interface BudgetLimits {
 export interface PolicyProgress {
   reviewCompletedForAttempt: boolean;
   editsSinceReview: boolean;
+  /** The role of the latest worker call, when that call failed. */
+  failedCall?: "implementation" | "review";
+  /** Whether the task's retry limit allows another implementation attempt. Defaults to true. */
+  retryAvailable?: boolean;
 }
 
 const TASK_KINDS = new Set<TaskKind>(["implementation", "debugging", "architecture", "research", "review"]);
@@ -133,6 +137,15 @@ export function selectNextAction(
   progress: PolicyProgress,
 ): NextAction {
   const action = selectUnboundedAction(decision, verification, config, progress);
+  if (action === "done" && progress.failedCall) {
+    // A failed worker call never completes the run: a failed implementation is tried again while retries and
+    // budget remain; otherwise a person decides.
+    const canRetry =
+      progress.failedCall === "implementation" &&
+      progress.retryAvailable !== false &&
+      !exhaustedBudget(run, config.limits);
+    return canRetry ? "retry" : "ask-user";
+  }
   // Budgets stop further work; they do not discard a satisfied result or a request for human judgment.
   if (action === "done" || action === "ask-user") return action;
   return exhaustedBudget(run, config.limits) ? "fail" : action;

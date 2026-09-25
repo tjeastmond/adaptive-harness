@@ -161,6 +161,8 @@ interface Step {
   advanceMs?: number;
   /** Wait until the runtime cancels the call. */
   block?: boolean;
+  /** Report the call as failed. */
+  fail?: boolean;
 }
 
 class FakeWorker implements WorkerAdapter {
@@ -187,7 +189,7 @@ class FakeWorker implements WorkerAdapter {
     await emit({ type: "message", role: "assistant", text: "working", at });
     if (step.usage) await emit({ type: "usage", usage: step.usage, at });
     if (step.block) await cancelled;
-    const status = step.block ? "cancelled" : "succeeded";
+    const status = step.block ? "cancelled" : step.fail ? "failed" : "succeeded";
     for (const [path, content] of Object.entries(step.write ?? {}))
       writeFileSync(join(request.workspace, path), content);
     if (this.clock && step.advanceMs) this.clock.now += step.advanceMs;
@@ -203,6 +205,7 @@ class FakeWorker implements WorkerAdapter {
       finalOutput: "done",
       usage: step.usage ?? { inputTokens: 10, outputTokens: 5 },
       rawEventCount: 1,
+      ...(step.fail ? { error: "Provider exited with code 1" } : {}),
     } satisfies WorkerResult;
   }
 }
@@ -620,6 +623,50 @@ test("failed verification asks the person instead of completing on a done decisi
   expect((await runtime.getRun(run.id)).status).toBe("completed");
 });
 
+test("a done decision after a failed worker call retries the task instead of completing", async () => {
+  const { runtime, store, worker, create } = harness({
+    completions: ["done", "done"],
+    steps: [{ fail: true }, { write: { "feature.txt": "feature\n" } }],
+  });
+  const run = await create();
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("completed");
+  expect(worker.requests.map((request) => request.task.attempt)).toEqual([1, 2]);
+  const actions = (await store.listEvents(run.id, 0, 1000)).flatMap((event) =>
+    event.payload.type === "policy.action" ? [event.payload] : [],
+  );
+  expect(actions.map((action) => action.action)).toEqual(["retry", "done"]);
+  expect(actions[0]?.reasonCodes).toContain("worker-failed");
+});
+
+test("a done decision after a failed worker call asks the person when no retry remains", async () => {
+  const { runtime, store, create } = harness({
+    completions: ["done"],
+    steps: [{ fail: true }],
+    limits: { maxRetriesPerTask: 0 },
+  });
+  const run = await create();
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("paused");
+  const [approval] = await store.listApprovals(run.id, "pending");
+  expect(approval?.prompt).toContain("worker-failed");
+  expect(approval?.choices).not.toContain("retry");
+  expect(approval?.choices).toContain("done");
+});
+
+test("a failed review is not a completed review and does not complete the run", async () => {
+  const { runtime, store, worker, create } = harness({
+    completions: ["review", "done"],
+    steps: [{ write: { "feature.txt": "feature\n" } }, { fail: true }],
+  });
+  const run = await create();
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("paused");
+  expect(worker.requests.map((request) => request.task.access.mode)).toEqual(["write", "read"]);
+  const [approval] = await store.listApprovals(run.id, "pending");
+  expect(approval?.prompt).toContain("worker-failed");
+});
+
 test("an approval requested with an exhausted budget offers only choices that start no work", async () => {
   const { runtime, store, create } = harness({ completions: ["ask-user"], limits: { maxWorkerCalls: 1 } });
   const run = await create();
@@ -682,7 +729,7 @@ test("cancelling a run that waits for approval cancels the approval", async () =
   expect((await store.getApproval(approval?.id ?? ""))?.status).toBe("cancelled");
 });
 
-test("pausing during a worker call keeps its result and resumes at verification", async () => {
+test("pausing during a worker call keeps its result, resumes at verification, and retries the stopped call", async () => {
   const { runtime, store, worker, create } = harness({ steps: [{ block: true, write: { "feature.txt": "x\n" } }] });
   const run = await create();
   const started = runtime.startRun(run.id);
@@ -694,8 +741,17 @@ test("pausing during a worker call keeps its result and resumes at verification"
 
   await runtime.resumeRun(run.id);
   expect((await runtime.getRun(run.id)).status).toBe("completed");
-  expect(worker.requests).toHaveLength(1);
-  expect(await statuses(store, run.id)).toEqual(["routing", "running", "paused", "verifying", "completed"]);
+  // The stopped call did not finish its work, so a done decision starts a new attempt.
+  expect(worker.requests).toHaveLength(2);
+  expect(await statuses(store, run.id)).toEqual([
+    "routing",
+    "running",
+    "paused",
+    "verifying",
+    "running",
+    "verifying",
+    "completed",
+  ]);
 });
 
 test("changes made outside the harness between worker calls fail the run", async () => {
@@ -731,7 +787,7 @@ function mortal(store: SqliteHarnessStore, dieWhen: (events: HarnessEvent["type"
   });
 }
 
-test("a restart recovers an interrupted call without executing it again", async () => {
+test("a restart recovers an interrupted call without executing it again and retries the task", async () => {
   const database = join(tempDir("harness-runtime-db-"), "harness.sqlite");
   const store = new SqliteHarnessStore(database);
   stores.push(store);
@@ -755,10 +811,13 @@ test("a restart recovers an interrupted call without executing it again", async 
   await second.runtime.resumeRun(run.id);
 
   expect((await store.getRun(run.id))?.status).toBe("completed");
-  expect(second.worker.requests).toHaveLength(0);
-  const [call] = await store.listWorkerCalls(run.id);
+  // The interrupted call is recorded as failed; the retry is a new attempt, not a repeat of that call.
+  expect(second.worker.requests).toHaveLength(1);
+  expect(second.worker.requests[0]?.task.attempt).toBe(2);
+  const [call, retry] = await store.listWorkerCalls(run.id);
   expect(call?.result).toMatchObject({ status: "failed", error: expect.stringContaining("not executed again") });
-  expect((await store.getRun(run.id))?.budget.workerCalls).toBe(1);
+  expect(retry?.result.status).toBe("succeeded");
+  expect((await store.getRun(run.id))?.budget.workerCalls).toBe(2);
 });
 
 test("a restart after a finished call reuses its saved result", async () => {
