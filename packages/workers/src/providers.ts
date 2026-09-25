@@ -125,6 +125,10 @@ abstract class CliWorker implements WorkerAdapter {
   }
   protected abstract args(request: WorkerRequest, reportPath?: string): string[];
   protected abstract executable(): string;
+  /** A remediation for a provider failure this adapter recognizes from its stderr. */
+  protected failureHint(_stderr: string): string | undefined {
+    return undefined;
+  }
 
   async preflight(): Promise<ProviderPreflight> {
     const result = await runProcess({
@@ -317,11 +321,16 @@ abstract class CliWorker implements WorkerAdapter {
                         : isReadOnly(request) && filesChanged.length
                           ? "Read-only worker changed files"
                           : [
-                              `Provider exited with code ${result.exitCode}`,
-                              stderrTail(result.stderr, request.environment),
+                              this.failureHint(result.stderr),
+                              [
+                                `Provider exited with code ${result.exitCode}`,
+                                stderrTail(result.stderr, request.environment),
+                              ]
+                                .filter(Boolean)
+                                .join(": "),
                             ]
                               .filter(Boolean)
-                              .join(": "),
+                              .join(". "),
             }
           : {}),
       };
@@ -354,8 +363,21 @@ export class CodexWorkerAdapter extends CliWorker {
   }
 }
 
+/** cursor-agent options that let a headless call run in a workspace the user has not trusted interactively. */
+const CURSOR_TRUST_ARGS = new Set(["--trust", "--yolo", "--force", "-f"]);
+
 export class CursorWorkerAdapter extends CliWorker {
   readonly kind = "cursor-cli" as const;
+  override async preflight(): Promise<ProviderPreflight> {
+    const preflight = await super.preflight();
+    const trusted = (this.config.extraArgs ?? []).some((arg) => CURSOR_TRUST_ARGS.has(arg));
+    if (!preflight.ok || trusted) return preflight;
+    // A version check cannot see workspace trust, so say what a first run in an untrusted workspace needs.
+    return {
+      ...preflight,
+      details: [...preflight.details, "Runs fail in untrusted workspaces unless extraArgs includes --trust"],
+    };
+  }
   protected executable(): string {
     return this.config.command ?? "cursor-agent";
   }
@@ -371,5 +393,11 @@ export class CursorWorkerAdapter extends CliWorker {
       ...(this.config.extraArgs ?? []),
       isReadOnly(request) ? `Read-only task: do not modify files.\n${request.instructions}` : request.instructions,
     ];
+  }
+  protected override failureHint(stderr: string): string | undefined {
+    // Headless Cursor refuses a workspace the user has not trusted; the harness does not trust it on their behalf.
+    return /Workspace Trust Required/i.test(stderr)
+      ? "Cursor has not trusted this workspace; add --trust to the provider's extraArgs to allow headless runs in it"
+      : undefined;
   }
 }

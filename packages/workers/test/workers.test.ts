@@ -23,6 +23,7 @@ if (${JSON.stringify(mode)} === "env") writeFileSync(${JSON.stringify(join(dir, 
 if (${JSON.stringify(mode)} === "timeout") await new Promise((resolve) => setTimeout(resolve, 30_000));
 if (${JSON.stringify(mode)} === "invalid") { console.log("{invalid"); process.exit(0); }
 if (${JSON.stringify(mode)} === "longexit") { console.error("x".repeat(600) + "\\x1b]0;title\\x07 tail-end"); process.exit(3); }
+if (${JSON.stringify(mode)} === "trust") { console.error("Workspace Trust Required"); process.exit(1); }
 if (${JSON.stringify(mode)} === "exit") { console.error("\\x1b[33mfailure\\x1b[0m\\n  needs secret-value\\n"); process.exit(7); }
 if (${JSON.stringify(mode)} === "write") writeFileSync(${JSON.stringify(join(dir, "worker-change.txt"))}, "changed");
 if (${JSON.stringify(mode)} === "callback") { writeFileSync(${JSON.stringify(join(dir, ".git", "pid"))}, String(process.pid)); console.log("event"); await new Promise((resolve) => setTimeout(resolve, 30_000)); }
@@ -209,6 +210,25 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     const result = await new Adapter({ command }).execute(request(dir), () => {});
     expect(result.status).toBe("succeeded");
     expect(result.report?.filesChanged).toEqual([]);
+  });
+});
+
+test("Cursor reports how to trust a workspace it refuses", async () => {
+  const { dir, command } = await fixture("trust");
+  const cursor = await new CursorWorkerAdapter({ command }).execute(request(dir), () => {});
+  expect(cursor.status).toBe("failed");
+  expect(cursor.error).toBe(
+    "Cursor has not trusted this workspace; add --trust to the provider's extraArgs to allow headless runs in it. " +
+      "Provider exited with code 1: Workspace Trust Required",
+  );
+  const codex = await new CodexWorkerAdapter({ command }).execute(request(dir), () => {});
+  expect(codex.error).toBe("Provider exited with code 1: Workspace Trust Required");
+  expect((await new CursorWorkerAdapter({ command }).preflight()).details).toEqual([
+    "Runs fail in untrusted workspaces unless extraArgs includes --trust",
+  ]);
+  expect(await new CursorWorkerAdapter({ command, extraArgs: ["--trust"] }).preflight()).toMatchObject({
+    ok: true,
+    details: [],
   });
 });
 

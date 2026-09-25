@@ -64,6 +64,8 @@ bun run apps/cli/src/cli.ts run "Add cursor pagination to the users endpoint" --
 bun run apps/cli/src/cli.ts approvals answer <request-id> <answer> --config harness.yaml
 ```
 
+Headless `cursor-agent` refuses to run in a workspace you have not trusted, and the harness does not trust one on your behalf. To run Cursor workers in a new checkout or worktree, add `--trust` to the Cursor provider's `extraArgs`. `providers doctor` notes when it is missing, and a refused call reports the same remedy.
+
 Other run controls:
 
 - `runs watch <run-id> [--after sequence]` follows a run's events until it finishes.
