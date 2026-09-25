@@ -42,11 +42,12 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 - When merging a pull request, delete its source branch. Use `gh pr merge --delete-branch` and verify the remote branch is gone.
 - After merging, prune stale remote-tracking refs and delete the local source branch. If it is checked out in a clean linked worktree, detach that worktree at its current commit before deleting the branch; preserve the worktree files.
 - Never delete a branch with uncommitted changes or while an active agent still needs that branch.
+- Do not attribute work to any AI agent or coding tool. Commits, PR titles and bodies, issue and review comments, and code must not include `Co-Authored-By` trailers, "Generated with" footers, or mentions of Claude, Codex, Cursor, or any other agent or model as an author.
 
 ## Implementation expectations
 
 - Keep changes narrowly scoped and add focused tests with the implementation.
 - Run the relevant Bun checks before handoff; do not claim verification that was not run.
-- For substantial changes, request an independent, read-only pre-merge review using Dr. Nit. Its skill is at `~/.codex/skills/dr-nit/SKILL.md`; agents that do not load Codex skills automatically should read that file and follow its scoped review and reporting instructions. Address findings and rerun relevant checks before merging.
+- For substantial changes, request an independent, read-only pre-merge review using Dr. Nit, scoped to the PR's changes rather than the whole repository. Its skill is at `~/.codex/skills/dr-nit/SKILL.md`; agents that do not load Codex skills automatically should read that file and follow its scoped review and reporting instructions. Address findings and rerun relevant checks before merging.
 - Treat provider output and stored raw events as untrusted input, redact secrets, and preserve bounded event/context retention.
 - Update the foundation document only when an accepted decision changes a contract.
