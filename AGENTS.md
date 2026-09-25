@@ -47,5 +47,6 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 
 - Keep changes narrowly scoped and add focused tests with the implementation.
 - Run the relevant Bun checks before handoff; do not claim verification that was not run.
+- For substantial changes, request an independent, read-only pre-merge review using Dr. Nit. Its skill is at `~/.codex/skills/dr-nit/SKILL.md`; agents that do not load Codex skills automatically should read that file and follow its scoped review and reporting instructions. Address findings and rerun relevant checks before merging.
 - Treat provider output and stored raw events as untrusted input, redact secrets, and preserve bounded event/context retention.
 - Update the foundation document only when an accepted decision changes a contract.
