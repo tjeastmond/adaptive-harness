@@ -416,11 +416,13 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async #exclusive(runId: RunId, body: (drive: Drive) => Promise<void>, timed = true): Promise<void> {
     if (this.#active.has(runId)) throw new LeaseUnavailableError(`Run ${runId} is already active in this runtime`);
-    const at = this.#now();
-    if (!(await this.#store.acquireRunLease(runId, this.#owner, iso(at), iso(at - this.#leaseTimeoutMs)))) {
-      throw new LeaseUnavailableError(`Run ${runId} is active in another runtime`);
-    }
+    // The slot is reserved synchronously, before the lease await, so a concurrent call in this process is
+    // reported as local activity rather than as another runtime's lease.
     const task = (async () => {
+      const at = this.#now();
+      if (!(await this.#store.acquireRunLease(runId, this.#owner, iso(at), iso(at - this.#leaseTimeoutMs)))) {
+        throw new LeaseUnavailableError(`Run ${runId} is active in another runtime`);
+      }
       let drive: Drive | undefined;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
@@ -899,8 +901,13 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       case "review":
         return this.#assign(drive, "review", this.#settings.routing.reviewerAgent, "review", events);
       case "ask-user": {
-        const choices = COMPLETION_CHOICES.filter(
-          (choice) => choice !== "retry" || drive.cp.retries < limits.maxRetriesPerTask,
+        // With a budget exhausted, only choices that start no further work are offered.
+        const budget = exhaustedBudget(drive.run, limits);
+        if (budget && !reasons.includes(budget)) reasons.push(budget);
+        const choices = COMPLETION_CHOICES.filter((choice) =>
+          budget
+            ? choice === "done" || choice === "fail"
+            : choice !== "retry" || drive.cp.retries < limits.maxRetriesPerTask,
         );
         return this.#requestApproval(
           drive,

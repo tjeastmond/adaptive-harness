@@ -438,6 +438,30 @@ test("completion approvals pause the run and resume on a valid answer", async ()
   expect((await store.list(run.id)).some((chunk) => chunk.source === "approval")).toBe(true);
 });
 
+test("an approval requested with an exhausted budget offers only choices that start no work", async () => {
+  const { runtime, store, create } = harness({ completions: ["ask-user"], limits: { maxWorkerCalls: 1 } });
+  const run = await create();
+  await runtime.startRun(run.id);
+  const [approval] = await store.listApprovals(run.id, "pending");
+  expect(approval?.choices).toEqual(["done", "fail"]);
+  expect(approval?.prompt).toContain("worker-call-limit");
+});
+
+test("concurrent calls for one run in the same runtime report local activity", async () => {
+  const { runtime, store, create } = harness({ completions: ["ask-user"] });
+  const run = await create();
+  await runtime.startRun(run.id);
+  const [approval] = await store.listApprovals(run.id, "pending");
+  const results = await Promise.allSettled([
+    runtime.answerApproval(approval?.id ?? "", "fail"),
+    runtime.answerApproval(approval?.id ?? "", "fail"),
+  ]);
+  const rejected = results.filter((result) => result.status === "rejected");
+  expect(rejected).toHaveLength(1);
+  expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("already active in this runtime");
+  expect((await runtime.getRun(run.id)).status).toBe("failed");
+});
+
 test("unclear requirements ask for clarification before any worker call", async () => {
   const { runtime, store, worker, create } = harness({ route: routeAnswers(0.1) });
   const run = await create();
@@ -584,6 +608,36 @@ test("a restart after a finished call reuses its saved result", async () => {
   expect(calls).toHaveLength(1);
   expect(calls[0]?.result.status).toBe("succeeded");
   expect(finished?.budget.inputTokens).toBe(10);
+});
+
+test("a restart after verification evidence was written does not duplicate it", async () => {
+  const database = join(tempDir("harness-runtime-db-"), "harness.sqlite");
+  const store = new SqliteHarnessStore(database);
+  stores.push(store);
+  const clock = { now: Date.parse("2026-09-25T12:00:00.000Z") };
+  const first = harness({
+    database,
+    clock,
+    store: mortal(store, (events) => events.includes("verification.completed")),
+    owner: "first",
+  });
+  const run = await first.create();
+  expect(first.runtime.startRun(run.id)).rejects.toThrow("process exited");
+  await waitFor(async () => (await store.list(run.id, { types: ["diff"] })).length === 1);
+  await Bun.sleep(20);
+
+  clock.now += 5_000;
+  const second = harness({ database, clock, store, owner: "second", workspace: first.workspace });
+  expect(await second.runtime.recoverInterruptedRuns()).toEqual([run.id]);
+  await second.runtime.resumeRun(run.id);
+
+  expect((await store.getRun(run.id))?.status).toBe("completed");
+  expect(second.worker.requests).toHaveLength(0);
+  expect(await store.list(run.id, { types: ["test-result"] })).toHaveLength(1);
+  const diffs = await store.list(run.id, { types: ["diff"] });
+  expect(diffs).toHaveLength(1);
+  const diff = diffs[0]?.content as { workerChanges: { path: string }[] };
+  expect(diff.workerChanges.map((change) => change.path)).toEqual(["feature.txt"]);
 });
 
 test("a live runtime's lease prevents another runtime from recovering its run", async () => {
