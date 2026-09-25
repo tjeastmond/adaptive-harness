@@ -1138,24 +1138,25 @@ export function selectNextAction(
   verification: VerificationResult,
   run: HarnessRun,
   config: HarnessConfig,
+  progress: { reviewCompletedForAttempt: boolean; editsSinceReview: boolean },
 ): NextAction {
-  if (run.currentStep >= config.limits.maxSteps) return "fail";
-  if (run.budget.workerCalls >= config.limits.maxWorkerCalls) return "fail";
-  if (run.budget.inputTokens >= config.limits.maxInputTokens) return "fail";
-  if (run.budget.estimatedCostUsd >= config.limits.maxCostUsd) return "fail";
+  const action = selectUnboundedAction(decision, verification, config, progress);
+  // Budgets stop further work; they do not discard a satisfied result or a request for human judgment.
+  if (action === "done" || action === "ask-user") return action;
+  return exhaustedBudget(run, config.limits) ? "fail" : action;
+}
 
+function selectUnboundedAction(decision, verification, config, progress): NextAction {
   if (!verification.ok && decision.moreWorkUseful >= 0.65) return "retry";
 
-  if (
+  const reviewRequested =
     decision.implementationRiskScore >= config.routing.requireReviewRiskScore ||
-    decision.needsIndependentReview >= config.routing.autoProceedConfidence
-  ) {
-    return "review";
-  }
+    decision.needsIndependentReview >= config.routing.autoProceedConfidence ||
+    decision.nextAction === "review";
+  const reviewEligible = !progress.reviewCompletedForAttempt || progress.editsSinceReview;
+  if (reviewRequested) return reviewEligible ? "review" : "ask-user";
 
-  if (decision.nextActionConfidence < config.routing.askUserBelowConfidence) {
-    return "ask-user";
-  }
+  if (decision.nextActionConfidence < config.routing.askUserBelowConfidence) return "ask-user";
 
   if (
     decision.requirementsSatisfied >= config.routing.autoProceedConfidence &&
@@ -1169,7 +1170,9 @@ export function selectNextAction(
 }
 ```
 
-Add loop guards so the same action cannot repeat indefinitely. For example, a review may happen once per implementation attempt unless new edits are made.
+`exhaustedBudget` checks steps, worker calls, input tokens, estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
+
+A review happens at most once per implementation attempt unless new edits are made; a repeated review request asks the person instead.
 
 ## 14. SQLite telemetry
 
@@ -1320,6 +1323,8 @@ Exit criteria:
 7. Support done, retry, review, ask-user, and fail outcomes.
 8. Implement pause, resume, cancel, approval response, and startup recovery.
 9. Expose all operations through `HarnessRuntime` rather than CLI-specific functions.
+
+`LocalHarnessRuntime` (`packages/runtime/src/runtime.ts`) implements this milestone. A run is driven only by the runtime holding its lease, and each step commits the run, its checkpoint, and its events atomically. A worker call is persisted as in flight before it starts. After a restart, `recoverInterruptedRuns` pauses active runs whose lease is stale, and resuming reuses the saved result of an in-flight call or records it as interrupted. The call is never started again. The runtime captures a Git fingerprint baseline before each worker call and treats `changesSinceBaseline` as the authoritative set of worker changes. A read-only worker that changes anything fails the run, including a further edit to a file that was already dirty. Adapter `filesChanged` (status-line attribution) remains a provider-level hint only. Pausing cancels an in-flight call and keeps its result; paused time is not charged to the time budget.
 
 Exit criteria:
 

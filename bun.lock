@@ -83,6 +83,7 @@
         "@adaptive-harness/persistence": "workspace:*",
         "@adaptive-harness/protocol": "workspace:*",
         "@adaptive-harness/verification": "workspace:*",
+        "@adaptive-harness/workers": "workspace:*",
         "@adaptive-harness/workspace": "workspace:*",
       },
     },
