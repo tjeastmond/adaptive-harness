@@ -22,7 +22,7 @@ export function createPersistentDecisionGateway(
       id: audit.response?.id ?? randomUUID(),
       runId: audit.runId,
       createdAt: audit.createdAt,
-      phase: audit.phase as "route" | "completion",
+      phase: audit.phase,
       requestStateHash: audit.requestStateHash,
       questions: audit.questions,
       ...(audit.response ? { response: audit.response } : {}),
