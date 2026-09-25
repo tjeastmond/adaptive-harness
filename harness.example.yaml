@@ -75,6 +75,7 @@ limits:
   maxWorkerCalls: 5
   maxInputTokens: 1000000
   maxCostUsd: 10
+  maxElapsedMs: 3600000
   workerTimeoutMs: 1200000
 
 git:

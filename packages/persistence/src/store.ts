@@ -16,7 +16,7 @@ import type {
   StateStore,
   WorkerResult,
 } from "@adaptive-harness/core";
-import type { EventEnvelope } from "@adaptive-harness/protocol";
+import type { ApprovalRequest, EventEnvelope } from "@adaptive-harness/protocol";
 
 export interface DecisionRecord {
   id: string;
@@ -50,6 +50,25 @@ export interface ContextAssemblyRecord {
   selectedChunks: Array<{ chunkId: string; visibility: ContextVisibility }>;
   summary: string;
   renderedContentHash: string;
+}
+
+/** Cross-process run ownership and control requests. The checkpoint shape belongs to the runtime. */
+export interface RunControl {
+  runId: string;
+  owner?: string;
+  heartbeatAt?: string;
+  pauseRequested: boolean;
+  cancelRequested: boolean;
+  checkpoint?: unknown;
+}
+
+/** Changes committed atomically by the current lease owner. */
+export interface RunCommit {
+  run?: HarnessRun;
+  checkpoint?: unknown;
+  events?: EventEnvelope[];
+  approval?: ApprovalRequest;
+  clearControls?: Array<"pause" | "cancel">;
 }
 
 export interface StoreOptions {
@@ -121,6 +140,14 @@ interface EventRow {
   causation_id: string | null;
   payload: string;
 }
+interface ControlRow {
+  run_id: string;
+  owner: string | null;
+  heartbeat_at: string | null;
+  pause_requested: number;
+  cancel_requested: number;
+  checkpoint: string | null;
+}
 interface ContextRow {
   id: string;
   run_id: string;
@@ -182,6 +209,19 @@ const MIGRATIONS = [
     rendered_content_hash TEXT NOT NULL
   );
   CREATE INDEX context_assemblies_run_ordinal ON context_assemblies(run_id, ordinal);`,
+  `CREATE TABLE run_controls (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id),
+    owner TEXT,
+    heartbeat_at TEXT,
+    pause_requested INTEGER NOT NULL DEFAULT 0,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    checkpoint TEXT
+  );
+  CREATE TABLE approvals (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+    status TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL
+  );
+  CREATE INDEX approvals_run_created ON approvals(run_id, created_at, id);`,
 ] as const;
 
 function boundedLimit(limit: number | undefined): number {
@@ -236,6 +276,10 @@ export class SqliteHarnessStore implements StateStore {
   }
 
   async updateRun(run: HarnessRun): Promise<void> {
+    this.#updateRun(run);
+  }
+
+  #updateRun(run: HarnessRun): void {
     const result = this.#db
       .query("UPDATE runs SET status = ?, updated_at = ?, data = ? WHERE id = ?")
       .run(run.status, run.updatedAt, json(run, this.#options), run.id);
@@ -258,6 +302,18 @@ export class SqliteHarnessStore implements StateStore {
   }
 
   async appendEvent(event: EventEnvelope): Promise<void> {
+    this.#appendEvent(event);
+  }
+
+  /** The highest event sequence for a run, or 0 when it has none. */
+  async lastEventSequence(runId: string): Promise<number> {
+    const row = this.#db
+      .query("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM events WHERE run_id = ?")
+      .get(runId) as { sequence: number };
+    return row.sequence;
+  }
+
+  #appendEvent(event: EventEnvelope): void {
     if (event.version !== 1) throw new Error(`Unsupported event version ${event.version}`);
     if (!Number.isSafeInteger(event.sequence) || event.sequence < 1) throw new Error("Invalid event sequence");
     const eventPayload = event.payload as unknown as {
@@ -314,6 +370,109 @@ export class SqliteHarnessStore implements StateStore {
       ...(row.causation_id === null ? {} : { causationId: row.causation_id }),
       payload: parse<EventEnvelope["payload"]>(row.payload),
     }));
+  }
+
+  /** Claims a run when it is unowned, already ours, or its owner stopped renewing before staleBefore. */
+  async acquireRunLease(runId: string, owner: string, now: string, staleBefore: string): Promise<boolean> {
+    return this.#db.transaction(() => {
+      this.#db.query("INSERT OR IGNORE INTO run_controls(run_id) VALUES (?)").run(runId);
+      const result = this.#db
+        .query(
+          `UPDATE run_controls SET owner = ?, heartbeat_at = ?
+        WHERE run_id = ? AND (owner IS NULL OR owner = ? OR heartbeat_at IS NULL OR heartbeat_at < ?)`,
+        )
+        .run(owner, now, runId, owner, staleBefore);
+      return result.changes > 0;
+    })();
+  }
+
+  async renewRunLease(runId: string, owner: string, now: string): Promise<boolean> {
+    const result = this.#db
+      .query("UPDATE run_controls SET heartbeat_at = ? WHERE run_id = ? AND owner = ?")
+      .run(now, runId, owner);
+    return result.changes > 0;
+  }
+
+  async releaseRunLease(runId: string, owner: string): Promise<void> {
+    this.#db
+      .query("UPDATE run_controls SET owner = NULL, heartbeat_at = NULL WHERE run_id = ? AND owner = ?")
+      .run(runId, owner);
+  }
+
+  /** Records a pause or cancel request for whichever process owns the run. */
+  async requestRunControl(runId: string, kind: "pause" | "cancel"): Promise<void> {
+    const column = kind === "pause" ? "pause_requested" : "cancel_requested";
+    this.#db.transaction(() => {
+      this.#db.query("INSERT OR IGNORE INTO run_controls(run_id) VALUES (?)").run(runId);
+      this.#db.query(`UPDATE run_controls SET ${column} = 1 WHERE run_id = ?`).run(runId);
+    })();
+  }
+
+  async getRunControl(runId: string): Promise<RunControl | undefined> {
+    const row = this.#db.query("SELECT * FROM run_controls WHERE run_id = ?").get(runId) as ControlRow | null;
+    if (!row) return undefined;
+    return {
+      runId: row.run_id,
+      ...(row.owner === null ? {} : { owner: row.owner }),
+      ...(row.heartbeat_at === null ? {} : { heartbeatAt: row.heartbeat_at }),
+      pauseRequested: row.pause_requested === 1,
+      cancelRequested: row.cancel_requested === 1,
+      ...(row.checkpoint === null ? {} : { checkpoint: parse<unknown>(row.checkpoint) }),
+    };
+  }
+
+  /** Applies run, checkpoint, approval, and event changes together, only while owner holds the lease. */
+  async commitRun(runId: string, owner: string, commit: RunCommit): Promise<void> {
+    this.#db.transaction(() => {
+      const row = this.#db.query("SELECT owner FROM run_controls WHERE run_id = ?").get(runId) as {
+        owner: string | null;
+      } | null;
+      if (row?.owner !== owner) throw new Error(`Run ${runId} lease is not held by this runtime`);
+      if (commit.run) {
+        if (commit.run.id !== runId) throw new Error("Committed run does not match lease");
+        this.#updateRun(commit.run);
+      }
+      if (commit.checkpoint !== undefined) {
+        this.#db
+          .query("UPDATE run_controls SET checkpoint = ? WHERE run_id = ?")
+          .run(json(commit.checkpoint, this.#options), runId);
+      }
+      if (commit.approval) {
+        if (commit.approval.runId !== runId) throw new Error("Committed approval does not match lease");
+        this.#db
+          .query(
+            `INSERT INTO approvals(id, run_id, status, created_at, data) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data
+          WHERE approvals.run_id = excluded.run_id AND approvals.created_at = excluded.created_at`,
+          )
+          .run(
+            commit.approval.id,
+            runId,
+            commit.approval.status,
+            commit.approval.createdAt,
+            json(commit.approval, this.#options),
+          );
+      }
+      for (const kind of commit.clearControls ?? []) {
+        const column = kind === "pause" ? "pause_requested" : "cancel_requested";
+        this.#db.query(`UPDATE run_controls SET ${column} = 0 WHERE run_id = ?`).run(runId);
+      }
+      for (const event of commit.events ?? []) this.#appendEvent(event);
+    })();
+  }
+
+  async getApproval(id: string): Promise<ApprovalRequest | undefined> {
+    const row = this.#db.query("SELECT data FROM approvals WHERE id = ?").get(id) as JsonRow | null;
+    return row ? parse<ApprovalRequest>(row.data) : undefined;
+  }
+
+  async listApprovals(runId: string, status?: ApprovalRequest["status"]): Promise<ApprovalRequest[]> {
+    const rows = status
+      ? this.#db
+          .query("SELECT data FROM approvals WHERE run_id = ? AND status = ? ORDER BY created_at, id")
+          .all(runId, status)
+      : this.#db.query("SELECT data FROM approvals WHERE run_id = ? ORDER BY created_at, id").all(runId);
+    return (rows as JsonRow[]).map((row) => parse<ApprovalRequest>(row.data));
   }
 
   async saveTask(task: HarnessTask): Promise<void> {

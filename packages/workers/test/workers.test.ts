@@ -134,35 +134,21 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     expect(result.report?.filesChanged).toContainEqual({ path: "worker-change.txt", status: "added" });
   });
 
-  test("fails closed on a dirty workspace before invoking the worker", async () => {
-    const { dir, command } = await fixture("ok");
-    const tracked = join(dir, "tracked.txt");
-    await writeFile(tracked, "original");
-    expect(
-      await Bun.spawn(["git", "-C", dir, "add", "tracked.txt"], { stdout: "ignore", stderr: "ignore" }).exited,
-    ).toBe(0);
-    expect(
-      await Bun.spawn(
-        [
-          "git",
-          "-C",
-          dir,
-          "-c",
-          "user.name=Test",
-          "-c",
-          "user.email=test@example.com",
-          "commit",
-          "-qm",
-          "test: fixture",
-        ],
-        { stdout: "ignore", stderr: "ignore" },
-      ).exited,
-    ).toBe(0);
-    await writeFile(tracked, "modified before worker");
+  test("attributes only status entries that change during the call in a dirty workspace", async () => {
+    const { dir, command } = await fixture("write");
+    await writeFile(join(dir, "user-change.txt"), "present before worker");
     const result = await new Adapter({ command }).execute(request(dir), () => {});
     expect(result.status).toBe("failed");
-    expect(result.error).toBe("Workspace Git status unavailable or not clean");
-    await expect(readFile(join(dir, ".git", "args.json"), "utf8")).rejects.toThrow();
+    expect(result.error).toBe("Read-only worker changed files");
+    expect(result.report?.filesChanged).toEqual([{ path: "worker-change.txt", status: "added" }]);
+  });
+
+  test("runs in a workspace whose pre-existing changes stay untouched", async () => {
+    const { dir, command } = await fixture("ok");
+    await writeFile(join(dir, "user-change.txt"), "present before worker");
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.status).toBe("succeeded");
+    expect(result.report?.filesChanged).toEqual([]);
   });
 });
 

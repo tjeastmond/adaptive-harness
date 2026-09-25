@@ -100,6 +100,8 @@ export const HarnessConfigSchema = z
         maxWorkerCalls: z.number().int().positive().default(5),
         maxInputTokens: z.number().int().positive().default(1_000_000),
         maxCostUsd: z.number().positive().default(10),
+        /** Active processing time; paused time awaiting a person is excluded. */
+        maxElapsedMs: z.number().int().positive().default(3_600_000),
         workerTimeoutMs: z.number().int().positive().default(1_200_000),
       })
       .strict(),

@@ -95,7 +95,7 @@ test("migrates an existing version 1 database without replacing its run", async 
   expect(await store.get("new-state")).toEqual(chunk("new-state"));
   store.close();
   const migrated = new Database(databasePath, { readonly: true });
-  expect((migrated.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+  expect((migrated.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3);
   migrated.close();
 });
 

@@ -20,7 +20,15 @@ export interface RoutingPolicy {
 
 export interface DecisionPolicyConfig {
   routing: RoutingPolicy;
-  limits: { maxSteps: number; maxWorkerCalls: number; maxInputTokens: number; maxCostUsd: number };
+  limits: BudgetLimits;
+}
+
+export interface BudgetLimits {
+  maxSteps: number;
+  maxWorkerCalls: number;
+  maxInputTokens: number;
+  maxCostUsd: number;
+  maxElapsedMs: number;
 }
 
 export interface PolicyProgress {
@@ -107,6 +115,16 @@ export function selectInitialAgent(route: RouteDecision, config: { routing: Rout
   return config.routing.defaultAgent;
 }
 
+/** Returns the first exhausted budget, if any. An exhausted budget forbids starting more work. */
+export function exhaustedBudget(run: Pick<HarnessRun, "currentStep" | "budget">, limits: BudgetLimits) {
+  if (run.currentStep >= limits.maxSteps) return "step-limit";
+  if (run.budget.workerCalls >= limits.maxWorkerCalls) return "worker-call-limit";
+  if (run.budget.inputTokens >= limits.maxInputTokens) return "token-limit";
+  if (run.budget.estimatedCostUsd >= limits.maxCostUsd) return "cost-limit";
+  if (run.budget.elapsedMs >= limits.maxElapsedMs) return "time-limit";
+  return undefined;
+}
+
 export function selectNextAction(
   decision: CompletionDecision,
   verification: VerificationResult,
@@ -114,10 +132,18 @@ export function selectNextAction(
   config: DecisionPolicyConfig,
   progress: PolicyProgress,
 ): NextAction {
-  if (run.currentStep >= config.limits.maxSteps) return "fail";
-  if (run.budget.workerCalls >= config.limits.maxWorkerCalls) return "fail";
-  if (run.budget.inputTokens >= config.limits.maxInputTokens) return "fail";
-  if (run.budget.estimatedCostUsd >= config.limits.maxCostUsd) return "fail";
+  const action = selectUnboundedAction(decision, verification, config, progress);
+  // Budgets stop further work; they do not discard a satisfied result or a request for human judgment.
+  if (action === "done" || action === "ask-user") return action;
+  return exhaustedBudget(run, config.limits) ? "fail" : action;
+}
+
+function selectUnboundedAction(
+  decision: CompletionDecision,
+  verification: VerificationResult,
+  config: DecisionPolicyConfig,
+  progress: PolicyProgress,
+): NextAction {
   if (!verification.ok && decision.moreWorkUseful >= 0.65) return "retry";
   const reviewRequested =
     decision.implementationRiskScore >= config.routing.requireReviewRiskScore ||
