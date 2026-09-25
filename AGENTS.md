@@ -54,9 +54,9 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 
 ## Claude-specific rules
 
-These rules apply to Claude (Claude Code and the Claude desktop app). A pattern-based `pkill` run by Claude once terminated every application on the user's machine.
+These rules apply to Claude agent sessions (Claude Code in the terminal or the Claude desktop app), not to this project's `apps/cli`. A pattern-based `pkill` run by a Claude agent once terminated every application on the user's machine.
 
-- Never terminate processes by name or pattern. Do not use `pkill`, `killall`, or `kill` on PIDs found by searching. A pattern can match unrelated processes; for example, `cat` matches every path under `/Applications`.
-- Stop only processes you started, using the session's own task controls. If one cannot be stopped that way, report it to the user instead of searching for it.
+- Never terminate processes by name or pattern. Do not use `pkill`, `killall`, or `kill` on PIDs found by searching. `pkill -f` matches the pattern against each process's full command line, so a short pattern hits unrelated processes; for example, `cat` matches every app launched from `/Applications` because its executable path contains "Applications".
+- Stop only processes you started: use the task-stop tool with the task ID of a background command, or let a foreground command finish or time out. If one cannot be stopped that way, report it to the user instead of searching for it.
 - Limit machine use to the command line for this project: Git, `gh`, `bun`, and reading and editing files in the repository and your scratch directory. Do not use desktop, browser, AppleScript, or other app-control tools, and do not change other applications or system state.
 - Avoid commands that wait for interactive input, such as a bare `cat` with no file.
