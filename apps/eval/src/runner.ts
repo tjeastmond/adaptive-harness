@@ -100,12 +100,17 @@ export function createFixtureRepository(fixture: Fixture): string {
   return root;
 }
 
+/** Both the task config and the eval's own Jev client read their decision settings from here. */
+const EVAL_DECISION = { jev: {}, fallback: { onUnavailable: "fail", onLowConfidence: "ask-user" } } as const;
+/** Answering more approvals than this means the run is looping; the task is reported as `approval-limit`. */
+const MAX_APPROVALS = 20;
+
 export function evalConfig(task: EvalTask, provider: EvalProvider, database: string): HarnessConfig {
   return HarnessConfigSchema.parse({
     version: 1,
     project: { name: `eval-${task.id}` },
     storage: { database },
-    decision: { jev: {}, fallback: { onUnavailable: "fail", onLowConfidence: "ask-user" } },
+    decision: EVAL_DECISION,
     providers: { worker: { kind: PROVIDER_KINDS[provider] } },
     agents: {
       implementer: {
@@ -173,24 +178,26 @@ async function runTask(
   secrets: Record<string, string>,
 ): Promise<TaskResult> {
   const workspace = createFixtureRepository(task.fixture);
-  const dataDir = mkdtempSync(join(tmpdir(), "harness-eval-db-"));
-  const configPath = join(workspace, "harness.yaml");
-  const config = evalConfig(task, options.provider, join(dataDir, "harness.sqlite"));
-  const store = new SqliteHarnessStore(config.storage.database, { redactValues: Object.values(secrets) });
-  const workers: Record<string, WorkerAdapter> = options.liveWorkers
-    ? createConfiguredWorkers(config)
-    : { worker: new SimulatedWorker(PROVIDER_KINDS[options.provider], task.solution) };
-  const runtime = new LocalHarnessRuntime({
-    config: { path: configPath, config, hash: `eval-${task.id}` },
-    store,
-    jev: arm === "jev" ? jev : NO_JEV,
-    workers,
-    decisionMode: arm,
-    decisionReason: "eval deterministic arm",
-    environment: secrets,
-  });
+  let dataDir: string | undefined;
+  let store: SqliteHarnessStore | undefined;
   const started = performance.now();
   try {
+    dataDir = mkdtempSync(join(tmpdir(), "harness-eval-db-"));
+    const configPath = join(workspace, "harness.yaml");
+    const config = evalConfig(task, options.provider, join(dataDir, "harness.sqlite"));
+    store = new SqliteHarnessStore(config.storage.database, { redactValues: Object.values(secrets) });
+    const workers: Record<string, WorkerAdapter> = options.liveWorkers
+      ? createConfiguredWorkers(config)
+      : { worker: new SimulatedWorker(PROVIDER_KINDS[options.provider], task.solution) };
+    const runtime = new LocalHarnessRuntime({
+      config: { path: configPath, config, hash: `eval-${task.id}` },
+      store,
+      jev: arm === "jev" ? jev : NO_JEV,
+      workers,
+      decisionMode: arm,
+      decisionReason: "eval deterministic arm",
+      environment: secrets,
+    });
     const run = await runtime.createRun({
       objective: { text: task.objective, acceptanceCriteria: task.acceptanceCriteria },
       workspace,
@@ -198,9 +205,14 @@ async function runTask(
     });
     await runtime.startRun(run.id);
     let interventions = 0;
-    for (let round = 0; round < 20; round++) {
+    let approvalLimit = false;
+    for (;;) {
       const [pending] = await store.listApprovals(run.id, "pending");
       if (!pending) break;
+      if (interventions >= MAX_APPROVALS) {
+        approvalLimit = true;
+        break;
+      }
       const reply = answer(pending, task, await lastVerification(store, run.id));
       options.log?.(`  ${task.id} [${arm}] approval (${pending.kind}): ${reply.slice(0, 60)}`);
       interventions += 1;
@@ -217,7 +229,11 @@ async function runTask(
       arm,
       runId: run.id,
       status: finished.status,
-      ...(finished.failureReason ? { failureReason: finished.failureReason } : {}),
+      ...(approvalLimit
+        ? { failureReason: "approval-limit" }
+        : finished.failureReason
+          ? { failureReason: finished.failureReason }
+          : {}),
       verified: finished.status === "completed" && (await lastVerification(store, run.id)),
       interventions,
       workerCalls: finished.budget.workerCalls,
@@ -235,10 +251,10 @@ async function runTask(
       ...(options.keep ? { workspace } : {}),
     };
   } finally {
-    store.close();
+    store?.close();
     if (!options.keep) {
       rmSync(workspace, { recursive: true, force: true });
-      rmSync(dataDir, { recursive: true, force: true });
+      if (dataDir) rmSync(dataDir, { recursive: true, force: true });
     }
   }
 }
@@ -265,10 +281,7 @@ export function summarize(arm: EvalArm, results: TaskResult[]): ArmSummary {
 /** Runs every task once per arm with the same worker, so the arms differ only in who makes decisions. */
 export async function runEval(options: EvalOptions): Promise<EvalReport> {
   const startedAt = new Date().toISOString();
-  const defaults = HarnessConfigSchema.shape.decision.parse({
-    jev: {},
-    fallback: { onUnavailable: "fail", onLowConfidence: "ask-user" },
-  }).jev;
+  const defaults = HarnessConfigSchema.shape.decision.parse(EVAL_DECISION).jev;
   const apiKey = options.env[defaults.apiKeyEnv] ?? "";
   const secrets: Record<string, string> = apiKey ? { [defaults.apiKeyEnv]: apiKey } : {};
   const skipped: EvalReport["skipped"] = [];
