@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { LoadHarnessConfigOptions } from "../src/index.ts";
-import { loadHarnessConfig as load } from "../src/index.ts";
+import { loadHarnessConfig as load, ProviderSchema } from "../src/index.ts";
 
 const dirs: string[] = [];
 const repo = resolve(import.meta.dir, "../../..");
@@ -24,6 +24,9 @@ afterEach(async () => {
 });
 
 describe("loadHarnessConfig", () => {
+  test("defaults Cursor to the cursor-agent executable", () => {
+    expect(ProviderSchema.parse({ kind: "cursor-cli" }).command).toBe("cursor-agent");
+  });
   test("normalizes equivalent YAML and TOML examples to the same config and hash", async () => {
     const { dir } = await fixture();
     await writeFile(join(dir, "harness.toml"), tomlExample);

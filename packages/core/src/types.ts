@@ -180,7 +180,7 @@ export interface ProviderPreflight {
 }
 
 export type WorkerStreamEvent =
-  | { type: "session.started"; sessionId?: string; at: string }
+  | { type: "session.started"; sessionId?: string; callId?: WorkerCallId; at: string }
   | { type: "message"; role: "assistant" | "system"; text: string; at: string }
   | { type: "tool.started"; name: string; callId?: string; at: string }
   | { type: "tool.completed"; name: string; callId?: string; ok: boolean; at: string }

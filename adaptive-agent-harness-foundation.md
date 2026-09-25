@@ -194,7 +194,7 @@ providers:
 
   composer:
     kind: cursor-cli
-    command: agent
+    command: cursor-agent
     model: composer-2.5
     outputFormat: stream-json
     extraArgs: []
@@ -300,7 +300,7 @@ extraArgs = []
 
 [providers.composer]
 kind = "cursor-cli"
-command = "agent"
+command = "cursor-agent"
 model = "composer-2.5"
 outputFormat = "stream-json"
 extraArgs = []
@@ -775,7 +775,7 @@ const CodexProviderSchema = z
 const CursorProviderSchema = z
   .object({
     kind: z.literal("cursor-cli"),
-    command: z.string().min(1).default("agent"),
+    command: z.string().min(1).default("cursor-agent"),
     model: z.string().min(1).nullable().optional(),
     outputFormat: z.enum(["json", "stream-json", "text"]).default("stream-json"),
     extraArgs: z.array(z.string()).default([]),
@@ -1091,7 +1091,7 @@ For the read-only reviewer, use `--sandbox read-only` and instruct it to return 
 Use a non-interactive execution similar to:
 
 ```text
-agent \
+cursor-agent \
   --print \
   --output-format stream-json \
   --workspace <workspace> \
@@ -1351,7 +1351,7 @@ Exit criteria:
 ### Integration tests
 
 - Fake Jev HTTP server
-- Fake `codex` and `agent` executables placed first on `PATH`
+- Fake `codex` and `cursor-agent` executables placed first on `PATH`
 - Temporary Git repositories
 - Passing and failing verification commands
 - Process timeout and cancellation
