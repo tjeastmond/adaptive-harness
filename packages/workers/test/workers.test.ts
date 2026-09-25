@@ -19,6 +19,7 @@ if (process.argv.includes("--version")) { console.log(${JSON.stringify(version)}
 writeFileSync(${JSON.stringify(join(dir, ".git", "args.json"))}, JSON.stringify(process.argv.slice(2)));
 let prompt = ""; for await (const chunk of Bun.stdin.stream()) prompt += new TextDecoder().decode(chunk);
 writeFileSync(${JSON.stringify(join(dir, ".git", "stdin.txt"))}, prompt);
+if (${JSON.stringify(mode)} === "env") writeFileSync(${JSON.stringify(join(dir, ".git", "env.json"))}, JSON.stringify({ jev: process.env.HARNESS_TEST_JEV_KEY ?? null, worker: process.env.TEST_SECRET ?? null }));
 if (${JSON.stringify(mode)} === "timeout") await new Promise((resolve) => setTimeout(resolve, 30_000));
 if (${JSON.stringify(mode)} === "invalid") { console.log("{invalid"); process.exit(0); }
 if (${JSON.stringify(mode)} === "exit") { console.error("failure"); process.exit(7); }
@@ -132,6 +133,25 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     expect(events).toContainEqual(expect.objectContaining({ type: "tool.started", name: "[REDACTED]" }));
   });
 
+  test("withholds harness-only secrets from the worker environment", async () => {
+    const { dir, command } = await fixture("env");
+    process.env.HARNESS_TEST_JEV_KEY = "jev-secret";
+    try {
+      const adapter = new Adapter({ command, withheldEnvironment: ["HARNESS_TEST_JEV_KEY"] });
+      const withJevKey = {
+        ...request(dir),
+        environment: { TEST_SECRET: "secret-value", HARNESS_TEST_JEV_KEY: "jev-secret" },
+      };
+      expect((await adapter.execute(withJevKey, () => {})).status).toBe("succeeded");
+    } finally {
+      delete process.env.HARNESS_TEST_JEV_KEY;
+    }
+    expect(JSON.parse(await readFile(join(dir, ".git", "env.json"), "utf8"))).toEqual({
+      jev: null,
+      worker: "secret-value",
+    });
+  });
+
   test("rejects an oversized JSONL event", async () => {
     const { dir, command } = await fixture("oversize");
     const result = await new Adapter({ command }).execute(request(dir), () => {});
@@ -184,6 +204,21 @@ test("JSONL parser bounds oversized lines, accepts split UTF-8, and continues", 
   await parser.finish();
   expect(values).toEqual([{ x: "é" }, { ok: true }]);
   expect(parser.invalidCount).toBe(1);
+});
+
+test("process runner removes withheld variables from inherited and given environments", async () => {
+  process.env.HARNESS_TEST_INHERITED = "inherited";
+  try {
+    const result = await runProcess({
+      command: ["sh", "-c", 'printf "%s|%s|%s" "$HARNESS_TEST_INHERITED" "$HARNESS_TEST_GIVEN" "$HARNESS_TEST_KEPT"'],
+      env: { HARNESS_TEST_GIVEN: "given", HARNESS_TEST_KEPT: "kept" },
+      withheldEnv: ["HARNESS_TEST_INHERITED", "HARNESS_TEST_GIVEN"],
+      timeoutMs: 5000,
+    });
+    expect(result.stdout).toBe("||kept");
+  } finally {
+    delete process.env.HARNESS_TEST_INHERITED;
+  }
 });
 
 test("process runner reports a missing executable without leaking a system error", async () => {

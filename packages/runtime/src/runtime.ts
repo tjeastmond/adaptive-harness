@@ -163,7 +163,12 @@ function statusForPhase(cp: RunCheckpoint): RunStatus | undefined {
 export function createConfiguredWorkers(config: HarnessConfig): Record<string, WorkerAdapter> {
   return Object.fromEntries(
     Object.entries(config.providers).map(([name, provider]) => {
-      const options = { command: provider.command, model: provider.model, extraArgs: provider.extraArgs };
+      const options = {
+        command: provider.command,
+        model: provider.model,
+        extraArgs: provider.extraArgs,
+        withheldEnvironment: [config.decision.jev.apiKeyEnv],
+      };
       return [name, provider.kind === "codex-cli" ? new CodexWorkerAdapter(options) : new CursorWorkerAdapter(options)];
     }),
   );

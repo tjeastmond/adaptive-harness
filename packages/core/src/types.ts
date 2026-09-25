@@ -142,6 +142,7 @@ export interface WorkerRequest {
   workspace: string;
   model?: string;
   timeoutMs: number;
+  /** Secret values redacted from worker output. Adapters pass them to the worker except for names they withhold. */
   environment: Record<string, string>;
 }
 
