@@ -693,7 +693,6 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       agentName,
       instructions: [agent.instructions, ROLE_INSTRUCTIONS[role], context.summary].join("\n\n"),
       workspace: drive.run.workspace,
-      readOnly: role === "review" || agent.readOnly,
       timeoutMs: Math.max(1, Math.min(limits.workerTimeoutMs, limits.maxElapsedMs - drive.run.budget.elapsedMs)),
       environment: this.#environment,
     };
@@ -805,8 +804,10 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   }
 
   async #verify(drive: Drive): Promise<void> {
-    const { baseline, taskId, role = "implementation", agentName } = drive.cp;
+    const { baseline, taskId, role = "implementation" } = drive.cp;
     if (!baseline || !taskId) throw new Error("Verify checkpoint has no baseline");
+    const task = await this.#store.getTask(taskId);
+    if (!task) throw new Error(`Verify checkpoint task is missing: ${taskId}`);
     if (drive.run.status !== "verifying") await this.#transition(drive, "verifying");
     const verification = await verifyWorkspace(baseline, this.#settings.verification, {
       signal: drive.abort.signal,
@@ -845,8 +846,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     });
     const events: HarnessEvent[] = [{ type: "verification.completed", runId, result: verification.result }];
     drive.cp = { ...drive.cp, verification: verification.result, observed };
-    const agent = agentName ? this.#settings.agents[agentName] : undefined;
-    if ((role === "review" || agent?.readOnly) && changed) {
+    if (task.access.mode === "read" && changed) {
       const paths = workerChanges.map((change) => change.path).slice(0, 20);
       return this.#fail(drive, `Read-only worker changed the workspace: ${paths.join(", ") || "HEAD moved"}`, events);
     }

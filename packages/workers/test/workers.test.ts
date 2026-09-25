@@ -40,7 +40,6 @@ function request(dir: string): WorkerRequest {
     agentName: "tester",
     instructions: "Read this repository",
     workspace: dir,
-    readOnly: true,
     timeoutMs: 500,
     environment: { TEST_SECRET: "secret-value" },
     task: {
@@ -79,6 +78,21 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
       expect(args).toContain("read-only");
       expect(await readFile(join(dir, ".git", "stdin.txt"), "utf8")).toBe("Read this repository");
     } else expect(args.at(-1)).toContain("Read this repository");
+  });
+
+  test("derives write permission from the task access mode", async () => {
+    const { dir, command } = await fixture("ok");
+    const base = request(dir);
+    const result = await new Adapter({ command }).execute(
+      { ...base, instructions: "Change this repository", task: { ...base.task, access: { mode: "write" } } },
+      () => {},
+    );
+    expect(result.status).toBe("succeeded");
+    const args = JSON.parse(await readFile(join(dir, ".git", "args.json"), "utf8")) as string[];
+    if (Adapter === CodexWorkerAdapter) {
+      expect(args).toContain("workspace-write");
+      expect(args).not.toContain("read-only");
+    } else expect(args.at(-1)).toBe("Change this repository");
   });
 
   test.each([
