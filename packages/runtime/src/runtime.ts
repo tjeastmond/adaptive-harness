@@ -75,6 +75,8 @@ export interface RunCheckpoint {
   observed?: GitState;
   inFlight?: { taskId: string; callId?: string };
   verification?: VerificationResult;
+  /** The role of the latest worker call, when that call failed. */
+  failedCall?: Role;
   reviewCompletedForAttempt: boolean;
   editsSinceReview: boolean;
   approval?: {
@@ -850,7 +852,8 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       const status = result.status === "succeeded" ? "completed" : "failed";
       await this.#store.saveTask({ ...task, status, updatedAt: iso(this.#now()) });
     }
-    drive.cp = { ...withoutInFlight(drive.cp), phase: "verify" };
+    const { failedCall: _failedCall, ...cp } = withoutInFlight(drive.cp);
+    drive.cp = { ...cp, ...(result.status === "succeeded" ? {} : { failedCall: role }), phase: "verify" };
     await this.#commit(drive, [{ type: "worker.completed", runId, taskId, result }]);
   }
 
@@ -902,8 +905,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       const paths = workerChanges.map((change) => change.path).slice(0, 20);
       return this.#fail(drive, `Read-only worker changed the workspace: ${paths.join(", ") || "HEAD moved"}`, events);
     }
+    // A failed review is not a completed review; the policy may request it again.
     drive.cp =
-      role === "review"
+      role === "review" && !drive.cp.failedCall
         ? { ...drive.cp, phase: "complete", reviewCompletedForAttempt: true, editsSinceReview: false }
         : { ...drive.cp, phase: "complete", editsSinceReview: drive.cp.editsSinceReview || changed };
     await this.#commit(drive, events);
@@ -938,9 +942,15 @@ export class LocalHarnessRuntime implements HarnessRuntime {
         verification,
         drive.run,
         { routing: this.#settings.routing, limits },
-        { reviewCompletedForAttempt: drive.cp.reviewCompletedForAttempt, editsSinceReview: drive.cp.editsSinceReview },
+        {
+          reviewCompletedForAttempt: drive.cp.reviewCompletedForAttempt,
+          editsSinceReview: drive.cp.editsSinceReview,
+          ...(drive.cp.failedCall ? { failedCall: drive.cp.failedCall } : {}),
+          retryAvailable: drive.cp.retries < limits.maxRetriesPerTask,
+        },
       );
       reasons = [...decision.reasonCodes];
+      if (drive.cp.failedCall && (action === "retry" || action === "ask-user")) reasons.push("worker-failed");
       // Tell the person why they are asked when the provider judged failed work complete.
       if (action === "ask-user" && !verification.ok) reasons.push("verification-failed");
     } catch (error) {

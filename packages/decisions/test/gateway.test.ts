@@ -194,5 +194,15 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
       beforeReview,
     ),
   ).toBe("fail");
+  // A failed worker call never completes the run: a failed implementation retries while it can.
+  const failedImplementation = { ...beforeReview, failedCall: "implementation" as const };
+  expect(selectNextAction(satisfied, verification, activeRun, config, failedImplementation)).toBe("retry");
+  expect(
+    selectNextAction(satisfied, verification, activeRun, config, { ...failedImplementation, retryAvailable: false }),
+  ).toBe("ask-user");
+  expect(selectNextAction(satisfied, verification, spent, config, failedImplementation)).toBe("ask-user");
+  expect(selectNextAction(satisfied, verification, activeRun, config, { ...beforeReview, failedCall: "review" })).toBe(
+    "ask-user",
+  );
   expect(exhaustedBudget(spent, config.limits)).toBe("time-limit");
 });
