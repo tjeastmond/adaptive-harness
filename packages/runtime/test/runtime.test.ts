@@ -246,11 +246,12 @@ function harness(
     ...(options.owner ? { owner: options.owner } : {}),
   };
   const runtime = new LocalHarnessRuntime(runtimeOptions);
-  const create = () =>
+  const create = (extra: { dryRun?: boolean } = {}) =>
     runtime.createRun({
       objective: { text: "Add a feature file", acceptanceCriteria: ["feature.txt exists"] },
       workspace,
       configPath: join(workspace, "harness.yaml"),
+      ...extra,
     });
   return { runtime, store, worker, workspace, database, decisions, create };
 }
@@ -341,6 +342,61 @@ test("verification commands never see the Jev API key", async () => {
   ]);
 });
 
+test("a dry run records its plan and completes without assigning work", async () => {
+  const { runtime, store, worker, create } = harness();
+  const run = await create({ dryRun: true });
+  expect(run.dryRun).toBe(true);
+  await runtime.startRun(run.id);
+
+  const finished = await runtime.getRun(run.id);
+  expect(finished).toMatchObject({ status: "completed", dryRun: true, budget: { workerCalls: 0 } });
+  expect(worker.requests).toHaveLength(0);
+  expect(await store.listTasks(run.id)).toEqual([]);
+  expect(await statuses(store, run.id)).toEqual(["routing", "completed"]);
+  const events = await store.listEvents(run.id, 0, 1000);
+  const planned = events.find((event) => event.payload.type === "run.planned")?.payload;
+  expect(planned).toMatchObject({
+    type: "run.planned",
+    plan: {
+      route: { taskKind: "implementation" },
+      agentName: "builder",
+      access: "write",
+      provider: { name: "fake", kind: "codex-cli", preflight: { ok: true } },
+    },
+  });
+  expect(events.at(-1)?.payload.type).toBe("run.completed");
+  const plans = await store.list(run.id, { types: ["plan"] });
+  expect(plans.map((chunk) => chunk.source)).toContain("dry-run");
+});
+
+test("a dry run with unclear requirements records an unresolved plan instead of asking", async () => {
+  const { runtime, store, worker, create } = harness({ route: routeAnswers(0.1) });
+  const run = await create({ dryRun: true });
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("completed");
+  expect(worker.requests).toHaveLength(0);
+  expect(await store.listApprovals(run.id, "pending")).toEqual([]);
+  const planned = (await store.listEvents(run.id, 0, 1000)).find((event) => event.payload.type === "run.planned");
+  expect(planned?.payload).toMatchObject({ plan: { unresolved: { reason: "requirements-unclear" } } });
+});
+
+test("a route to an unknown agent fails live and dry runs alike", async () => {
+  const { runtime, worker, create } = harness({
+    configure: (settings) => {
+      settings.routing.defaultAgent = "ghost";
+    },
+  });
+  for (const dryRun of [false, true]) {
+    const run = await create({ dryRun });
+    await runtime.startRun(run.id);
+    expect(await runtime.getRun(run.id)).toMatchObject({
+      status: "failed",
+      failureReason: "Route selected unknown agent ghost",
+    });
+  }
+  expect(worker.requests).toHaveLength(0);
+});
+
 test("idempotent creation returns the existing run and config mismatches are rejected", async () => {
   const { runtime, workspace } = harness();
   const input = {
@@ -364,6 +420,10 @@ test("a dirty workspace fails preflight before any worker call", async () => {
   const failed = await runtime.getRun(run.id);
   expect(failed.status).toBe("failed");
   expect(worker.requests).toHaveLength(0);
+
+  const dryRun = await create({ dryRun: true });
+  await runtime.startRun(dryRun.id);
+  expect((await runtime.getRun(dryRun.id)).status).toBe("failed");
 });
 
 test("a run database inside the workspace must be ignored by Git", async () => {

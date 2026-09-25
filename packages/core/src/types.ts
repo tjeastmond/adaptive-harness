@@ -313,4 +313,17 @@ export interface HarnessRun {
   updatedAt: string;
   completedAt?: string;
   failureReason?: string;
+  /** A dry run stops after routing and records its plan instead of starting work. */
+  dryRun?: boolean;
+}
+
+/** What a dry run would do: the route decision, the selected agent, and whether its provider is ready. */
+export interface RunPlan {
+  decisionId?: string;
+  route?: RouteDecision;
+  agentName?: string;
+  access?: TaskAccessMode;
+  provider?: { name: string; kind: string; preflight: ProviderPreflight };
+  /** Why routing could not select an agent without a person, when it could not. */
+  unresolved?: { reason: "decision-handoff" | "requirements-unclear"; detail?: string };
 }

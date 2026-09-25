@@ -100,7 +100,7 @@ export async function runRunsCommand(args: string[]): Promise<number> {
       else
         for (const run of runs)
           console.log(
-            `${run.id}\t${run.status}\t${run.updatedAt}\t${run.objective.text.replace(/\s+/g, " ").slice(0, 120)}`,
+            `${run.id}\t${run.status}${run.dryRun ? " (dry run)" : ""}\t${run.updatedAt}\t${run.objective.text.replace(/\s+/g, " ").slice(0, 120)}`,
           );
     } else {
       const runId = positional[0];
@@ -112,7 +112,7 @@ export async function runRunsCommand(args: string[]): Promise<number> {
       if (json) console.log(JSON.stringify(runEvents ? { run, events: runEvents, nextAfter } : { run }, null, 2));
       else {
         console.log(
-          `Run: ${run.id}\nStatus: ${run.status}\nObjective: ${run.objective.text}\nWorkspace: ${run.workspace}\nUpdated: ${run.updatedAt}`,
+          `Run: ${run.id}\nStatus: ${run.status}${run.dryRun ? " (dry run)" : ""}\nObjective: ${run.objective.text}\nWorkspace: ${run.workspace}\nUpdated: ${run.updatedAt}`,
         );
         if (runEvents)
           for (const event of runEvents) console.log(`#${event.sequence}\t${event.occurredAt}\t${event.payload.type}`);

@@ -1,5 +1,5 @@
 import { loadHarnessConfig } from "@adaptive-harness/config";
-import type { HarnessRun, RunId } from "@adaptive-harness/core";
+import type { HarnessRun, RunId, RunPlan } from "@adaptive-harness/core";
 import type { ApprovalRequest, EventEnvelope, HarnessEvent } from "@adaptive-harness/protocol";
 import { nonnegativeInteger, type ParsedOptions, parseOptions } from "./options.ts";
 import type { CliRuntime, OpenRuntime } from "./runtime.ts";
@@ -14,6 +14,23 @@ const clip = (text: string, max = 160) => {
   const flat = line(text);
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
+
+/** One line summarizing a dry run's plan. */
+export function describePlan(plan: RunPlan): string {
+  const route = plan.route ? `${plan.route.taskKind} task` : "no route";
+  if (plan.unresolved) {
+    const { reason, detail } = plan.unresolved;
+    return `${route}, unresolved: ${reason}${detail ? ` (${detail})` : ""}`;
+  }
+  if (!plan.agentName) return `${route}, no agent selected`;
+  const provider = plan.provider;
+  const ready = !provider
+    ? "no provider"
+    : provider.preflight.ok
+      ? `${provider.name} ready`
+      : `${provider.name} not ready: ${clip(provider.preflight.details.join("; "))}`;
+  return `${route} -> agent ${plan.agentName} (${plan.access ?? "unknown"} access), ${ready}`;
+}
 
 /** One human-readable line per event; worker chatter is reduced to assistant messages and tool starts. */
 export function describeEvent(event: HarnessEvent): string | undefined {
@@ -56,6 +73,8 @@ export function describeEvent(event: HarnessEvent): string | undefined {
       return "run resumed";
     case "run.cancelled":
       return `run cancelled${event.reason ? `: ${event.reason}` : ""}`;
+    case "run.planned":
+      return `dry-run plan: ${describePlan(event.plan)}`;
     case "run.completed":
       return "run completed";
     case "run.failed":
@@ -72,11 +91,13 @@ function printEvent(envelope: EventEnvelope, json: boolean): void {
   if (text) console.log(`#${envelope.sequence}\t${text}`);
 }
 
-/** Tracks the approval a run is waiting for, as seen on its event stream. */
+/** Tracks the approval a run is waiting for, and a dry run's plan, as seen on its event stream. */
 class ApprovalTracker {
   pending: ApprovalRequest | undefined;
+  plan: RunPlan | undefined;
   observe(event: HarnessEvent): void {
-    if (event.type === "approval.requested") this.pending = event.request;
+    if (event.type === "run.planned") this.plan = event.plan;
+    else if (event.type === "approval.requested") this.pending = event.request;
     else if (event.type === "approval.answered" && event.request.id === this.pending?.id) this.pending = undefined;
   }
 }
@@ -121,12 +142,15 @@ async function drive(
   await watching;
 }
 
-function summarize(run: HarnessRun, pending: ApprovalRequest | undefined, json: boolean): number {
+function summarize(run: HarnessRun, tracker: ApprovalTracker, json: boolean): number {
+  const { pending, plan } = tracker;
   if (json) {
-    console.log(JSON.stringify({ run, ...(pending ? { approval: pending } : {}) }, null, 2));
+    console.log(JSON.stringify({ run, ...(pending ? { approval: pending } : {}), ...(plan ? { plan } : {}) }, null, 2));
   } else {
-    console.log(`Run ${run.id}: ${run.status}`);
-    if (pending) {
+    console.log(`Run ${run.id}: ${run.status}${run.dryRun ? " (dry run)" : ""}`);
+    if (plan) {
+      console.log(`Plan: ${describePlan(plan)}`);
+    } else if (pending) {
       console.log(`Waiting for approval ${pending.id}: ${pending.prompt}`);
       if (pending.choices?.length) console.log(`Choices: ${pending.choices.join(", ")}`);
       console.log(`Answer with: harness approvals answer ${pending.id} <answer>`);
@@ -181,25 +205,32 @@ function usage(message: string): number {
 }
 
 export async function runCommand(args: string[], context: CommandContext): Promise<number> {
-  const options = parseOptions(args, { values: ["config", "workspace", "decision-mode"], flags: ["json"] });
+  const options = parseOptions(args, {
+    values: ["config", "workspace", "decision-mode"],
+    flags: ["json", "dry-run"],
+  });
   if ("error" in options) return usage(options.error);
   const [objective, ...extra] = options.positional;
   if (!objective?.trim() || extra.length) {
     return usage(
-      "Usage: harness run <objective> [--config path] [--workspace path] [--decision-mode jev|deterministic] [--json]",
+      "Usage: harness run <objective> [--config path] [--workspace path] [--decision-mode jev|deterministic] [--dry-run] [--json]",
     );
   }
+  const dryRun = options.flags.has("dry-run");
   const json = options.flags.has("json");
   return withRuntime(context, options, "drive", async (session) => {
     const run = await session.runtime.createRun({
       objective: { text: objective.trim(), acceptanceCriteria: [] },
       workspace: options.values.get("workspace") ?? session.config.project.workspace,
       configPath: session.configPath,
+      ...(dryRun ? { dryRun } : {}),
     });
-    if (!json) console.log(`Run ${run.id} started (decision mode: ${session.decisionMode})`);
+    if (!json) {
+      console.log(`Run ${run.id} started${dryRun ? " as a dry run" : ""} (decision mode: ${session.decisionMode})`);
+    }
     const tracker = new ApprovalTracker();
     await drive(session, run.id, 0, tracker, !json, () => session.runtime.startRun(run.id));
-    return summarize(await session.runtime.getRun(run.id), tracker.pending, json);
+    return summarize(await session.runtime.getRun(run.id), tracker, json);
   });
 }
 
@@ -243,7 +274,7 @@ export async function controlCommand(
     if (command === "resume") {
       const after = await lastSequence(session, runId, tracker);
       await drive(session, runId, after, tracker, !json, () => session.runtime.resumeRun(runId));
-      return summarize(await session.runtime.getRun(runId), tracker.pending, json);
+      return summarize(await session.runtime.getRun(runId), tracker, json);
     }
     await (command === "pause" ? session.runtime.pauseRun(runId) : session.runtime.cancelRun(runId));
     const run = await session.runtime.getRun(runId);
@@ -273,7 +304,7 @@ export async function approvalsCommand(args: string[], context: CommandContext):
     const tracker = new ApprovalTracker();
     const after = await lastSequence(session, runId, tracker);
     await drive(session, runId, after, tracker, !json, () => session.runtime.answerApproval(requestId, answer));
-    return summarize(await session.runtime.getRun(runId), tracker.pending, json);
+    return summarize(await session.runtime.getRun(runId), tracker, json);
   });
 }
 

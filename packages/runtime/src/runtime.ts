@@ -10,7 +10,9 @@ import {
   type HarnessTask,
   isTerminalStatus,
   type NextAction,
+  type ProviderPreflight,
   type RunId,
+  type RunPlan,
   type RunStatus,
   type StateChunk,
   type TaskKind,
@@ -253,6 +255,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, elapsedMs: 0 },
       createdAt: at,
       updatedAt: at,
+      ...(input.dryRun ? { dryRun: true } : {}),
     };
     await this.#store.createRun(run);
     if (input.objective.suppliedContext) {
@@ -575,6 +578,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     } catch (error) {
       if (!(error instanceof DecisionHandoffError)) throw error;
       if (error.action === "fail") return this.#fail(drive, `route decision ${error.reason}`);
+      if (drive.run.dryRun) {
+        return this.#plan(drive, { unresolved: { reason: "decision-handoff", detail: error.reason } });
+      }
       const agents = Object.entries(this.#settings.agents)
         .filter(([, agent]) => agent.purpose === "implementation" && !agent.readOnly)
         .map(([name]) => name);
@@ -595,6 +601,15 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       content: route,
     });
     const selected = selectInitialAgent(route, this.#settings);
+    if (selected !== "ask-user" && !Object.hasOwn(this.#settings.agents, selected)) {
+      return this.#fail(drive, `Route selected unknown agent ${selected}`);
+    }
+    if (drive.run.dryRun) {
+      const plan: RunPlan = { decisionId: response.id, route };
+      if (selected === "ask-user")
+        return this.#plan(drive, { ...plan, unresolved: { reason: "requirements-unclear" } });
+      return this.#plan(drive, { ...plan, ...(await this.#planAgent(selected)) });
+    }
     if (selected === "ask-user") {
       return this.#requestApproval(
         drive,
@@ -605,9 +620,40 @@ export class LocalHarnessRuntime implements HarnessRuntime {
         },
       );
     }
-    if (!Object.hasOwn(this.#settings.agents, selected))
-      return this.#fail(drive, `Route selected unknown agent ${selected}`);
     await this.#assign(drive, "implementation", selected, route.taskKind);
+  }
+
+  /** Records a dry run's plan and completes the run without assigning work. */
+  async #plan(drive: Drive, plan: RunPlan): Promise<void> {
+    const runId = drive.run.id;
+    await this.#appendOnce({
+      id: `${runId}:dry-run-plan`,
+      runId,
+      type: "plan",
+      source: "dry-run",
+      createdAt: iso(this.#now()),
+      metadata: {},
+      content: plan,
+    });
+    await this.#transition(drive, "completed", () => [
+      { type: "run.planned", runId, plan },
+      { type: "run.completed", run: structuredClone(drive.run) },
+    ]);
+  }
+
+  async #planAgent(agentName: string): Promise<Omit<RunPlan, "decisionId" | "route">> {
+    const agent = this.#settings.agents[agentName];
+    if (!agent) throw new Error(`Unknown agent ${agentName}`);
+    const provider = this.#settings.providers[agent.provider];
+    const adapter = this.#workers[agent.provider];
+    const preflight: ProviderPreflight = adapter
+      ? await adapter.preflight()
+      : { ok: false, details: ["No adapter is available for this provider"] };
+    return {
+      agentName,
+      access: agent.readOnly ? "read" : "write",
+      provider: { name: agent.provider, kind: provider?.kind ?? "unknown", preflight },
+    };
   }
 
   async #decide(

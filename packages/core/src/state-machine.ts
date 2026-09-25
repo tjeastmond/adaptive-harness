@@ -5,7 +5,7 @@ const STOPPABLE = ["paused", "failed", "cancelled"] as const satisfies readonly 
 /** Every legal run status change. Terminal statuses have no exits. */
 export const RUN_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
   created: ["routing", ...STOPPABLE],
-  routing: ["running", ...STOPPABLE],
+  routing: ["running", "completed", ...STOPPABLE],
   running: ["verifying", ...STOPPABLE],
   reviewing: ["verifying", ...STOPPABLE],
   verifying: ["running", "reviewing", "completed", ...STOPPABLE],
