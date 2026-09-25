@@ -11,9 +11,12 @@
     "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@adaptive-harness/config": "workspace:*",
     "@adaptive-harness/core": "workspace:*",
     "@adaptive-harness/decisions": "workspace:*",
     "@adaptive-harness/persistence": "workspace:*",
-    "@adaptive-harness/protocol": "workspace:*"
+    "@adaptive-harness/protocol": "workspace:*",
+    "@adaptive-harness/verification": "workspace:*",
+    "@adaptive-harness/workspace": "workspace:*"
   }
 }

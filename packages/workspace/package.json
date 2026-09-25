@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@adaptive-harness/core": "workspace:*"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
