@@ -108,12 +108,17 @@ async function drive(
       if (stream) printEvent(event, false);
     }
   })();
+  // Settle the stream before reporting, but never let a stream error mask the action's own failure.
+  watching.catch(() => {});
   try {
     await action();
-  } finally {
+  } catch (error) {
     controller.abort();
-    await watching;
+    await watching.catch(() => {});
+    throw error;
   }
+  controller.abort();
+  await watching;
 }
 
 function summarize(run: HarnessRun, pending: ApprovalRequest | undefined, json: boolean): number {
@@ -132,10 +137,16 @@ function summarize(run: HarnessRun, pending: ApprovalRequest | undefined, json: 
   return run.status === "failed" ? 1 : 0;
 }
 
+/**
+ * `observe` only reads the run; `control` changes run state; `drive` also executes the run in this process and needs
+ * decisions. Only commands that change run state recover runs interrupted by a stopped owner.
+ */
+type RuntimeAccess = "observe" | "control" | "drive";
+
 async function withRuntime(
   context: CommandContext,
   options: ParsedOptions,
-  requireDecisions: boolean,
+  access: RuntimeAccess,
   body: (session: CliRuntime) => Promise<number>,
 ): Promise<number> {
   const mode = options.values.get("decision-mode");
@@ -149,10 +160,10 @@ async function withRuntime(
     session = await context.openRuntime({
       ...(configPath === undefined ? {} : { configPath }),
       ...(mode === undefined ? {} : { decisionMode: mode }),
-      requireDecisions,
+      requireDecisions: access === "drive",
       env: context.env,
     });
-    for (const runId of await session.recoverInterruptedRuns()) {
+    for (const runId of access === "observe" ? [] : await session.recoverInterruptedRuns()) {
       console.error(`Recovered interrupted run ${runId}; it is paused. Resume with: harness resume ${runId}`);
     }
     return await body(session);
@@ -179,7 +190,7 @@ export async function runCommand(args: string[], context: CommandContext): Promi
     );
   }
   const json = options.flags.has("json");
-  return withRuntime(context, options, true, async (session) => {
+  return withRuntime(context, options, "drive", async (session) => {
     const run = await session.runtime.createRun({
       objective: { text: objective.trim(), acceptanceCriteria: [] },
       workspace: options.values.get("workspace") ?? session.config.project.workspace,
@@ -201,7 +212,7 @@ export async function watchCommand(args: string[], context: CommandContext): Pro
     return usage("Usage: harness runs watch <run-id> [--after sequence] [--config path] [--json]");
   }
   const json = options.flags.has("json");
-  return withRuntime(context, options, false, async (session) => {
+  return withRuntime(context, options, "observe", async (session) => {
     await session.runtime.getRun(runId);
     for await (const event of session.runtime.subscribe(runId, after)) printEvent(event, json);
     if (!json) console.log(`Run ${runId}: ${(await session.runtime.getRun(runId)).status}`);
@@ -227,7 +238,7 @@ export async function controlCommand(
     );
   }
   const json = options.flags.has("json");
-  return withRuntime(context, options, command === "resume", async (session) => {
+  return withRuntime(context, options, command === "resume" ? "drive" : "control", async (session) => {
     const tracker = new ApprovalTracker();
     if (command === "resume") {
       const after = await lastSequence(session, runId, tracker);
@@ -255,7 +266,7 @@ export async function approvalsCommand(args: string[], context: CommandContext):
     );
   }
   const json = options.flags.has("json");
-  return withRuntime(context, options, true, async (session) => {
+  return withRuntime(context, options, "drive", async (session) => {
     const approval = await session.runtime.getApproval(requestId);
     if (!approval) throw new Error(`Approval not found: ${requestId}`);
     const runId = approval.runId;

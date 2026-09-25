@@ -10,7 +10,7 @@ import type {
   WorkerStreamEvent,
 } from "@adaptive-harness/core";
 import { runCli } from "../src/cli.ts";
-import { openLocalRuntime, type RuntimeOverrides } from "../src/runtime.ts";
+import { type CliRuntime, openLocalRuntime, type RuntimeOverrides } from "../src/runtime.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -147,7 +147,12 @@ class FakeWorker implements WorkerAdapter {
 }
 
 /** Runs the CLI in-process and captures what it prints. */
-async function cli(args: string[], overrides: RuntimeOverrides = {}, env: Record<string, string> = {}) {
+async function cli(
+  args: string[],
+  overrides: RuntimeOverrides = {},
+  env: Record<string, string> = {},
+  wrap: (session: CliRuntime) => CliRuntime = (session) => session,
+) {
   const out: string[] = [];
   const err: string[] = [];
   const log = spyOn(console, "log").mockImplementation((...parts: unknown[]) => out.push(parts.join(" ")));
@@ -155,7 +160,7 @@ async function cli(args: string[], overrides: RuntimeOverrides = {}, env: Record
   try {
     const code = await runCli(args, {
       env,
-      openRuntime: (request) => openLocalRuntime(request, { pollIntervalMs: 10, ...overrides }),
+      openRuntime: async (request) => wrap(await openLocalRuntime(request, { pollIntervalMs: 10, ...overrides })),
     });
     return { code, stdout: out.join("\n"), stderr: err.join("\n") };
   } finally {
@@ -275,6 +280,51 @@ test("agents list and providers doctor report configuration and preflight", asyn
   });
   expect(unkeyed.code).toBe(1);
   expect(JSON.parse(unkeyed.stdout)[0]).toMatchObject({ name: "jev", ok: false });
+});
+
+test("only commands that change run state recover interrupted runs", async () => {
+  const { configPath } = fixture();
+  let recoveries = 0;
+  const counting = (session: CliRuntime): CliRuntime => ({
+    ...session,
+    recoverInterruptedRuns: () => {
+      recoveries++;
+      return session.recoverInterruptedRuns();
+    },
+  });
+  const overrides = { jev: fakeJev(["ask-user"]), workers: { fake: new FakeWorker() } };
+  const started = await cli(["run", "Add a feature file", "--config", configPath], overrides, {}, counting);
+  expect(recoveries).toBe(1);
+  await cli(["cancel", runId(started.stdout), "--config", configPath], {}, {}, counting);
+  expect(recoveries).toBe(2);
+  await cli(["runs", "watch", runId(started.stdout), "--config", configPath], {}, {}, counting);
+  expect(recoveries).toBe(2);
+});
+
+test("a failing run action is reported even when the event stream also fails", async () => {
+  const { configPath } = fixture();
+  const failing = (session: CliRuntime): CliRuntime => {
+    const runtime = session.runtime;
+    return {
+      ...session,
+      runtime: new Proxy(runtime, {
+        get(target, key) {
+          if (key === "startRun") return async () => Promise.reject(new Error("worker launch failed"));
+          if (key === "subscribe") {
+            return async function* () {
+              yield* [];
+              throw new Error("stream failed");
+            };
+          }
+          const value = Reflect.get(target, key, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+    };
+  };
+  const result = await cli(["run", "Add a feature file", "--config", configPath], { jev: fakeJev([]) }, {}, failing);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toBe("worker launch failed");
 });
 
 test("invalid arguments are usage errors", async () => {
