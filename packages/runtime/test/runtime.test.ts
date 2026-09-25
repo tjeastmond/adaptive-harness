@@ -203,8 +203,13 @@ function harness(
   const decisions = jev(options.completions ?? ["done"], options.route);
   const worker = new FakeWorker(options.steps ?? [{ write: { "feature.txt": "feature\n" } }], options.clock);
   const clock = options.clock;
+  const settings = config(options.limits, options.git);
   const runtimeOptions: LocalRuntimeOptions = {
-    config: { path: join(workspace, "harness.yaml"), config: config(options.limits, options.git), hash: "config-hash" },
+    config: {
+      path: join(workspace, "harness.yaml"),
+      config: { ...settings, storage: { ...settings.storage, database } },
+      hash: "config-hash",
+    },
     store,
     jev: decisions.provider,
     workers: { fake: worker },
@@ -296,6 +301,20 @@ test("a dirty workspace fails preflight before any worker call", async () => {
   const failed = await runtime.getRun(run.id);
   expect(failed.status).toBe("failed");
   expect(worker.requests).toHaveLength(0);
+});
+
+test("a run database inside the workspace must be ignored by Git", async () => {
+  const workspace = repository();
+  const { runtime, worker, create } = harness({ workspace, database: join(workspace, ".harness", "harness.sqlite") });
+  const run = await create();
+  await runtime.startRun(run.id);
+  expect((await runtime.getRun(run.id)).status).toBe("failed");
+  expect(worker.requests).toHaveLength(0);
+  const events: HarnessEvent[] = [];
+  for await (const event of runtime.subscribe(run.id)) events.push(event.payload);
+  expect(events.find((event) => event.type === "run.failed")).toMatchObject({
+    error: expect.stringContaining("not ignored"),
+  });
 });
 
 test("review uses a read-only agent and completes after the review", async () => {
@@ -420,6 +439,23 @@ test("active time beyond the time limit stops the run and paused time is not cha
   const done = await idle.runtime.getRun(waiting.id);
   expect(done.status).toBe("completed");
   expect(done.budget.elapsedMs).toBeLessThan(1_000);
+});
+
+test("subscriptions to a paused run end after an abort once persisted events are delivered", async () => {
+  const { runtime, create } = harness({ completions: ["ask-user"], steps: [{}] });
+  const run = await create();
+  const controller = new AbortController();
+  const seen: HarnessEvent["type"][] = [];
+  const watching = (async () => {
+    for await (const event of runtime.subscribe(run.id, 0, { signal: controller.signal }))
+      seen.push(event.payload.type);
+  })();
+  await runtime.startRun(run.id);
+  controller.abort();
+  await watching;
+  expect(seen[0]).toBe("run.created");
+  expect(seen.at(-1)).toBe("run.paused");
+  expect(seen).toContain("approval.requested");
 });
 
 test("completion approvals pause the run and resume on a valid answer", async () => {

@@ -41,7 +41,13 @@ import type {
   HarnessRuntime,
 } from "@adaptive-harness/protocol";
 import { CodexWorkerAdapter, CursorWorkerAdapter } from "@adaptive-harness/workers";
-import { captureGitState, compareGitStates, type GitState, preflightRepository } from "@adaptive-harness/workspace";
+import {
+  captureGitState,
+  compareGitStates,
+  type GitState,
+  isUnignoredRepositoryPath,
+  preflightRepository,
+} from "@adaptive-harness/workspace";
 import { createPersistentDecisionGateway } from "./decision-gateway.ts";
 import { verifyWorkspace } from "./verification.ts";
 
@@ -122,7 +128,18 @@ const ROLE_INSTRUCTIONS: Record<Role, string> = {
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    if (signal?.aborted) return done();
+    const wake = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", wake);
+      done();
+    };
+    const timer = setTimeout(wake, ms);
+    signal?.addEventListener("abort", wake, { once: true });
+  });
+}
 
 function initialCheckpoint(): RunCheckpoint {
   return {
@@ -142,7 +159,8 @@ function statusForPhase(cp: RunCheckpoint): RunStatus | undefined {
   return undefined;
 }
 
-function defaultWorkers(config: HarnessConfig): Record<string, WorkerAdapter> {
+/** Worker adapters for each configured provider, keyed by provider name. */
+export function createConfiguredWorkers(config: HarnessConfig): Record<string, WorkerAdapter> {
   return Object.fromEntries(
     Object.entries(config.providers).map(([name, provider]) => {
       const options = { command: provider.command, model: provider.model, extraArgs: provider.extraArgs };
@@ -181,7 +199,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const config = options.config.config;
     this.#store = options.store;
     this.#config = options.config;
-    this.#workers = options.workers ?? defaultWorkers(config);
+    this.#workers = options.workers ?? createConfiguredWorkers(config);
     this.#environment = options.environment ?? {};
     this.#now = options.now ?? Date.now;
     this.#owner = options.owner ?? `runtime-${randomUUID()}`;
@@ -262,6 +280,14 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     if (run.configHash !== this.#config.hash) throw new RuntimeUsageError(`Run ${runId} config changed since creation`);
     await this.#exclusive(runId, async (drive) => {
       if (drive.run.status !== "created") throw new RuntimeUsageError(`Run ${runId} has already started`);
+      const database = resolve(this.#settings.storage.database);
+      if (await isUnignoredRepositoryPath(drive.run.workspace, database)) {
+        await this.#fail(
+          drive,
+          `Run database ${database} is inside the workspace repository but not ignored by Git; ignore it (for example, add .harness/ to .gitignore) or move storage.database outside the repository`,
+        );
+        return;
+      }
       const preflight = await preflightRepository(drive.run.workspace, this.#settings.git);
       if (!preflight.ok || !preflight.state) {
         await this.#fail(drive, preflight.reasons.join("; ") || "The runtime requires a Git repository");
@@ -343,26 +369,38 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     return run;
   }
 
+  getApproval(requestId: string): Promise<ApprovalRequest | undefined> {
+    return this.#store.getApproval(requestId);
+  }
+
   listRuns(options?: { limit?: number; status?: RunStatus }): Promise<HarnessRun[]> {
     return this.#store.listRuns(options);
   }
 
-  /** Streams persisted events in order and ends after the run is terminal and fully drained. */
-  async *subscribe(runId: RunId, afterSequence = 0): AsyncIterable<EventEnvelope<HarnessEvent>> {
+  /** Streams persisted events in order and ends after the run is terminal and fully drained, or after `signal` aborts. */
+  async *subscribe(
+    runId: RunId,
+    afterSequence = 0,
+    options: { signal?: AbortSignal } = {},
+  ): AsyncIterable<EventEnvelope<HarnessEvent>> {
+    const { signal } = options;
     let cursor = afterSequence;
     for (;;) {
+      // Read the abort before listing, so events persisted before the abort are delivered first.
+      const stopping = signal?.aborted === true;
       const events = await this.#store.listEvents(runId, cursor, 500);
       for (const event of events) {
         cursor = event.sequence;
         yield event;
       }
       if (events.length === 500) continue;
+      if (stopping) return;
       const run = await this.getRun(runId);
       if (isTerminalStatus(run.status)) {
         if ((await this.#store.lastEventSequence(runId)) <= cursor) return;
         continue;
       }
-      await sleep(this.#pollMs);
+      await sleep(this.#pollMs, signal);
     }
   }
 

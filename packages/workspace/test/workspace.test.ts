@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { captureGitState, compareGitStates, preflightRepository } from "../src/index.ts";
+import { captureGitState, compareGitStates, isUnignoredRepositoryPath, preflightRepository } from "../src/index.ts";
 
 const dirs: string[] = [];
 const defaultPolicy = { requireRepository: true, requireClean: true, allowUntracked: false };
@@ -178,5 +178,19 @@ describe("Git evidence", () => {
     await expect(compareGitStates(await captureGitState(left), await captureGitState(right))).rejects.toThrow(
       "different repositories",
     );
+  });
+});
+
+describe("storage placement", () => {
+  test("reports repository paths that no ignore rule covers", async () => {
+    const dir = await repository();
+    const database = join(dir, ".harness", "harness.sqlite");
+    expect(await isUnignoredRepositoryPath(dir, database)).toBe(true);
+    await writeFile(join(dir, ".gitignore"), ".harness/\n");
+    expect(await isUnignoredRepositoryPath(dir, database)).toBe(false);
+    expect(await isUnignoredRepositoryPath(dir, join("/private/tmp", "elsewhere.sqlite"))).toBe(false);
+    const nonRepository = await mkdtemp("/private/tmp/harness-nonrepo-test-");
+    dirs.push(nonRepository);
+    expect(await isUnignoredRepositoryPath(nonRepository, join(nonRepository, "harness.sqlite"))).toBe(false);
   });
 });

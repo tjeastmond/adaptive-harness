@@ -29,6 +29,15 @@ export interface HarnessRuntime {
   cancelRun(runId: RunId): Promise<void>;
   answerApproval(requestId: string, answer: string): Promise<void>;
   getRun(runId: RunId): Promise<HarnessRun>;
+  getApproval(requestId: string): Promise<ApprovalRequest | undefined>;
   listRuns(options?: { limit?: number; status?: RunStatus }): Promise<HarnessRun[]>;
-  subscribe(runId: RunId, afterSequence?: number): AsyncIterable<EventEnvelope<HarnessEvent>>;
+  /**
+   * Streams persisted events in order. The stream ends once the run is terminal and drained, or once `signal`
+   * aborts and every event persisted before the abort has been delivered.
+   */
+  subscribe(
+    runId: RunId,
+    afterSequence?: number,
+    options?: { signal?: AbortSignal },
+  ): AsyncIterable<EventEnvelope<HarnessEvent>>;
 }

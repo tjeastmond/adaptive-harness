@@ -21,6 +21,6 @@ describe("config validate CLI", () => {
 
   test("rejects incomplete and unsupported commands", () => {
     expect(run("config", "validate", "--config").exitCode).toBe(2);
-    expect(run("run", "do something").exitCode).toBe(2);
+    expect(run("launch", "do something").exitCode).toBe(2);
   });
 });

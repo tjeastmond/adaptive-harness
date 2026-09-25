@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, readlink, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { FileChange } from "@adaptive-harness/core";
 
 export interface GitPolicy {
@@ -136,6 +136,39 @@ export async function captureGitState(workspace: string): Promise<GitState> {
     );
   }
   return { root, head: headResult?.trim() ?? null, entries, trackedDiffStat };
+}
+
+/** Resolves symlinks in the longest existing prefix, so paths that do not exist yet compare like their parents. */
+async function canonicalPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  try {
+    return await realpath(absolute);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || dirname(absolute) === absolute) throw error;
+    return join(await canonicalPath(dirname(absolute)), basename(absolute));
+  }
+}
+
+/**
+ * Whether `path` lies inside the workspace's repository without a Git ignore rule covering it. Harness storage
+ * in such a location would show up as an untracked change and as drift between harness observations.
+ */
+export async function isUnignoredRepositoryPath(workspace: string, path: string): Promise<boolean> {
+  let root: string;
+  try {
+    root = await canonicalPath((await git(workspace, ["rev-parse", "--show-toplevel"])).trim());
+  } catch {
+    return false;
+  }
+  const inside = relative(root, await canonicalPath(path));
+  if (!inside || inside.startsWith("..") || isAbsolute(inside)) return false;
+  try {
+    await git(root, ["check-ignore", "-q", "--no-index", "--", inside]);
+    return false;
+  } catch (error) {
+    if (error instanceof GitCommandError && error.exitCode === 1) return true;
+    throw error;
+  }
 }
 
 export async function preflightRepository(workspace: string, policy: GitPolicy): Promise<RepositoryPreflight> {

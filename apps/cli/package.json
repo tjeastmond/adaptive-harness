@@ -14,11 +14,10 @@
   },
   "dependencies": {
     "@adaptive-harness/config": "workspace:*",
+    "@adaptive-harness/core": "workspace:*",
+    "@adaptive-harness/decisions": "workspace:*",
+    "@adaptive-harness/persistence": "workspace:*",
     "@adaptive-harness/protocol": "workspace:*",
     "@adaptive-harness/runtime": "workspace:*"
-  },
-  "devDependencies": {
-    "@adaptive-harness/core": "workspace:*",
-    "@adaptive-harness/persistence": "workspace:*"
   }
 }
