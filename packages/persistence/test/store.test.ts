@@ -85,7 +85,7 @@ test("read-only open reads migrated data and cannot write", async () => {
   writable.close();
   const readonly = new SqliteHarnessStore(path, { readonly: true });
   expect(await readonly.getRun("run-1")).toEqual(run());
-  expect(readonly.createRun(run("other"))).rejects.toThrow();
+  await expect(readonly.createRun(run("other"))).rejects.toThrow();
   readonly.close();
 });
 
@@ -100,8 +100,8 @@ test("creates, updates, filters, and limits runs", async () => {
   await store.updateRun(updated);
   expect(await store.getRun("one")).toEqual(updated);
   expect((await store.listRuns())[0]?.id).toBe("one");
-  expect(store.updateRun(run("missing"))).rejects.toThrow("does not exist");
-  expect(store.listRuns({ limit: 0 })).rejects.toThrow("Run limit");
+  await expect(store.updateRun(run("missing"))).rejects.toThrow("does not exist");
+  await expect(store.listRuns({ limit: 0 })).rejects.toThrow("Run limit");
   store.close();
 });
 
@@ -121,7 +121,7 @@ test("task, decision, and worker call records round trip", async () => {
   };
   await store.saveTask(task);
   await store.createRun(run("other"));
-  expect(store.saveTask({ ...task, runId: "other" })).rejects.toThrow("cannot change run");
+  await expect(store.saveTask({ ...task, runId: "other" })).rejects.toThrow("cannot change run");
   expect(await store.getTask(task.id)).toEqual(task);
   expect(await store.listTasks("run-1")).toEqual([task]);
   const decision: DecisionRecord = {
@@ -133,7 +133,7 @@ test("task, decision, and worker call records round trip", async () => {
     response: { id: "decision-1", model: "jev", answers: {}, usage: {}, durationMs: 12, raw: {} },
   };
   await store.saveDecision(decision);
-  expect(store.saveDecision({ ...decision, runId: "other" })).rejects.toThrow("cannot change run");
+  await expect(store.saveDecision({ ...decision, runId: "other" })).rejects.toThrow("cannot change run");
   expect(await store.getDecision(decision.id)).toEqual(decision);
   expect(await store.listDecisions("run-1")).toEqual([decision]);
   const call: WorkerCallRecord = {
@@ -156,9 +156,9 @@ test("task, decision, and worker call records round trip", async () => {
     },
   };
   await store.saveWorkerCall(call);
-  expect(store.saveWorkerCall({ ...call, runId: "other" })).rejects.toThrow("cannot change run");
-  expect(store.saveWorkerCall({ ...call, taskId: "other-task" })).rejects.toThrow("cannot change run");
-  expect(store.saveWorkerCall({ ...call, id: "cross-run-call", runId: "other" })).rejects.toThrow();
+  await expect(store.saveWorkerCall({ ...call, runId: "other" })).rejects.toThrow("cannot change run");
+  await expect(store.saveWorkerCall({ ...call, taskId: "other-task" })).rejects.toThrow("cannot change run");
+  await expect(store.saveWorkerCall({ ...call, id: "cross-run-call", runId: "other" })).rejects.toThrow();
   expect(await store.getWorkerCall(call.id)).toEqual(call);
   expect(await store.listWorkerCalls("run-1")).toEqual([call]);
   store.close();
@@ -171,10 +171,10 @@ test("events are append-only, ordered per run, and replay after reopen", async (
   await store.createRun(run("other"));
   await store.appendEvent(event(1));
   await store.appendEvent(event(1, "other"));
-  expect(store.appendEvent(event(3))).rejects.toThrow("must be 2");
-  expect(store.appendEvent(event(1))).rejects.toThrow("must be 2");
-  expect(store.appendEvent({ ...event(2), version: 2 as 1 })).rejects.toThrow("Unsupported event version");
-  expect(store.appendEvent({ ...event(2), runId: "other" })).rejects.toThrow("payload run ID");
+  await expect(store.appendEvent(event(3))).rejects.toThrow("must be 2");
+  await expect(store.appendEvent(event(1))).rejects.toThrow("must be 2");
+  await expect(store.appendEvent({ ...event(2), version: 2 as 1 })).rejects.toThrow("Unsupported event version");
+  await expect(store.appendEvent({ ...event(2), runId: "other" })).rejects.toThrow("payload run ID");
   await store.appendEvent(event(2));
   store.close();
   const reopened = new SqliteHarnessStore(path);
@@ -190,8 +190,8 @@ test("event lists page in sequence order with a bounded limit", async () => {
   for (let sequence = 1; sequence <= 4; sequence++) await store.appendEvent(event(sequence));
   expect((await store.listEvents("run-1", 0, 2)).map((item) => item.sequence)).toEqual([1, 2]);
   expect((await store.listEvents("run-1", 2, 2)).map((item) => item.sequence)).toEqual([3, 4]);
-  expect(store.listEvents("run-1", 0, 0)).rejects.toThrow("Event limit");
-  expect(store.listEvents("run-1", 0, 1001)).rejects.toThrow("Event limit");
+  await expect(store.listEvents("run-1", 0, 0)).rejects.toThrow("Event limit");
+  await expect(store.listEvents("run-1", 0, 1001)).rejects.toThrow("Event limit");
   store.close();
 });
 
@@ -210,7 +210,7 @@ test("stored event JSON redacts credential keys and secret values and enforces a
   });
   expect(JSON.stringify(await store.listEvents("run-1"))).not.toContain("private");
   expect(JSON.stringify(await store.listEvents("run-1"))).toContain("[REDACTED]");
-  expect(
+  await expect(
     store.appendEvent({
       ...event(2),
       payload: {
@@ -230,7 +230,7 @@ test("run commits are fenced by the lease owner and apply atomically", async () 
   const later = "2026-09-23T12:01:00.000Z";
   expect(await store.acquireRunLease("run-1", "a", now, now)).toBe(true);
   expect(await store.acquireRunLease("run-1", "b", now, now)).toBe(false);
-  expect(store.commitRun("run-1", "b", { checkpoint: { phase: "work" } })).rejects.toThrow("lease is not held");
+  await expect(store.commitRun("run-1", "b", { checkpoint: { phase: "work" } })).rejects.toThrow("lease is not held");
   await store.requestRunControl("run-1", "pause");
   await store.commitRun("run-1", "a", {
     run: { ...run(), status: "paused", updatedAt: later },
@@ -243,7 +243,7 @@ test("run commits are fenced by the lease owner and apply atomically", async () 
     pauseRequested: false,
     checkpoint: { phase: "work" },
   });
-  expect(store.commitRun("run-1", "a", { checkpoint: { phase: "verify" }, events: [event(3)] })).rejects.toThrow(
+  await expect(store.commitRun("run-1", "a", { checkpoint: { phase: "verify" }, events: [event(3)] })).rejects.toThrow(
     "must be 2",
   );
   expect((await store.getRunControl("run-1"))?.checkpoint).toEqual({ phase: "work" });
@@ -264,7 +264,7 @@ test("approval updates keep their run and creation time or fail loudly", async (
     createdAt: now,
   };
   await store.commitRun("run-1", "owner", { approval });
-  expect(
+  await expect(
     store.commitRun("run-1", "owner", {
       approval: { ...approval, status: "answered", createdAt: "2026-09-23T12:05:00.000Z" },
     }),

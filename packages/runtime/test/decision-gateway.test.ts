@@ -54,7 +54,7 @@ test("runtime gateway persists Jev and bypass audit while emitting bypass events
       },
     });
     const request = routeRequest("Implement a small fix");
-    expect(gateway.evaluate({ runId: run.id, phase: "tool" }, request)).rejects.toThrow(
+    await expect(gateway.evaluate({ runId: run.id, phase: "tool" }, request)).rejects.toThrow(
       "Unsupported persisted decision phase tool",
     );
     expect(calls).toBe(0);
