@@ -76,6 +76,33 @@ Driving commands (`run`, `resume`, `approvals answer`) need the Jev API key. The
 
 The run database must not appear as an untracked file in the workspace repository. The default `storage.database` is `.harness/harness.sqlite` next to the config. If that location is inside the workspace, add `.harness/` to the workspace's `.gitignore`; otherwise the run fails before any worker starts.
 
+### Evaluating Jev
+
+`bun run eval` runs a fixed set of small tasks twice with the same worker. One arm uses Jev decisions and the other uses the deterministic bypass. The report compares the arms on:
+
+- Verified results.
+- Interventions: approvals the eval answered as the user.
+- Worker, review, and retry calls.
+- Worker tokens and cost.
+- Whether the route chose the expected task kind.
+
+```bash
+bun run eval                       # simulated workers; Jev is the only real service called
+bun run eval --arms deterministic  # no network calls at all
+bun run eval --live-workers --provider cursor --tasks settings-port,notes-typo
+bun run eval --list                # task ids
+```
+
+By default, workers are simulated: each task's scripted change is applied without calling Codex or Cursor, and worker usage is estimated from text length. `--live-workers` (or `HARNESS_EVAL_LIVE_WORKERS=1`) calls the real worker CLI instead; start with a few tasks, because live workers spend real tokens.
+
+Other behavior:
+
+- **Missing key:** the Jev arm is skipped if `TYPESAFE_API_KEY` is not set. Bun loads it from `.env.local` in the repository root.
+- **Workspaces:** each task runs in a fresh temporary Git repository, deleted afterward unless you pass `--keep`.
+- **Results:** written to `.harness/eval/` as JSON.
+
+The eval compares Jev with the bypass. It does not benchmark worker providers against each other.
+
 ## Tracking work
 
 Bugs, features, deferred tasks, and agent handoff notes live in **[GitHub Issues](https://github.com/tjeastmond/adaptive-harness/issues)**. Use the Bug, Feature, or Task / follow-up templates when creating issues.

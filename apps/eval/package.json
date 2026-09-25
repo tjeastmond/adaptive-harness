@@ -1,0 +1,19 @@
+{
+  "name": "@adaptive-harness/eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval": "bun run src/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@adaptive-harness/config": "workspace:*",
+    "@adaptive-harness/core": "workspace:*",
+    "@adaptive-harness/decisions": "workspace:*",
+    "@adaptive-harness/persistence": "workspace:*",
+    "@adaptive-harness/protocol": "workspace:*",
+    "@adaptive-harness/runtime": "workspace:*"
+  }
+}

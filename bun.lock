@@ -29,6 +29,18 @@
         "@adaptive-harness/runtime": "workspace:*",
       },
     },
+    "apps/eval": {
+      "name": "@adaptive-harness/eval",
+      "version": "0.1.0",
+      "dependencies": {
+        "@adaptive-harness/config": "workspace:*",
+        "@adaptive-harness/core": "workspace:*",
+        "@adaptive-harness/decisions": "workspace:*",
+        "@adaptive-harness/persistence": "workspace:*",
+        "@adaptive-harness/protocol": "workspace:*",
+        "@adaptive-harness/runtime": "workspace:*",
+      },
+    },
     "packages/config": {
       "name": "@adaptive-harness/config",
       "version": "0.1.0",
@@ -105,6 +117,8 @@
     "@adaptive-harness/core": ["@adaptive-harness/core@workspace:packages/core"],
 
     "@adaptive-harness/decisions": ["@adaptive-harness/decisions@workspace:packages/decisions"],
+
+    "@adaptive-harness/eval": ["@adaptive-harness/eval@workspace:apps/eval"],
 
     "@adaptive-harness/persistence": ["@adaptive-harness/persistence@workspace:packages/persistence"],
 
