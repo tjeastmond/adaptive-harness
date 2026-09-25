@@ -17,6 +17,8 @@ The original foundation is being revised to adopt the Jev state/context model. T
 5. Capabilities are exposed through a registry, enabling tiered tool disclosure later. Prefer existing CLIs, MCP servers, and installed skills; the harness does not recreate their integrations.
 6. Context-compression providers, including Headroom if adopted, remain implementations behind the harness-owned context abstraction.
 
+Cost optimization targets worker usage in Cursor, Codex, and Claude. Jev call cost is negligible for this project; use Jev where its bounded decisions can reduce worker tokens, irrelevant context, or unnecessary worker calls. Evaluate savings against worker spend and task quality, rather than optimizing Jev calls away.
+
 Do not implement advanced dynamic tool loading, broad parallel write execution, or elaborate context compression until these contracts and their focused vertical slice are established.
 
 ## Capability boundary
