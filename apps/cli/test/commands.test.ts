@@ -10,6 +10,7 @@ import type {
   WorkerStreamEvent,
 } from "@adaptive-harness/core";
 import { runCli } from "../src/cli.ts";
+import { describePlan } from "../src/commands.ts";
 import { type CliRuntime, openLocalRuntime, type RuntimeOverrides } from "../src/runtime.ts";
 
 const dirs: string[] = [];
@@ -365,4 +366,16 @@ test("invalid arguments are usage errors", async () => {
   expect((await cli(["runs", "watch", "run-1", "--after", "-1"])).code).toBe(2);
   expect((await cli(["approvals", "list"])).code).toBe(2);
   expect((await cli(["pause"])).code).toBe(2);
+});
+
+test("a plan shows preflight advice for a ready provider", () => {
+  const plan = {
+    agentName: "implementer",
+    access: "write" as const,
+    provider: { name: "composer", kind: "cursor-cli", preflight: { ok: true, details: ["Needs --trust"] } },
+  };
+  expect(describePlan(plan)).toBe("no route -> agent implementer (write access), composer ready (Needs --trust)");
+  expect(describePlan({ ...plan, provider: { ...plan.provider, preflight: { ok: true, details: [] } } })).toBe(
+    "no route -> agent implementer (write access), composer ready",
+  );
 });

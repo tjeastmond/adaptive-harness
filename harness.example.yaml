@@ -34,6 +34,7 @@ providers:
     command: cursor-agent
     model: composer-2.5
     outputFormat: stream-json
+    # Headless cursor-agent refuses workspaces you have not trusted. Add --trust to allow runs in this workspace.
     extraArgs: []
 
 agents:

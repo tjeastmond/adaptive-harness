@@ -27,7 +27,8 @@ export function describePlan(plan: RunPlan): string {
   const ready = !provider
     ? "no provider"
     : provider.preflight.ok
-      ? `${provider.name} ready`
+      ? // A ready provider can still carry advice, such as Cursor's workspace trust.
+        `${provider.name} ready${provider.preflight.details.length ? ` (${clip(provider.preflight.details.join("; "))})` : ""}`
       : `${provider.name} not ready: ${clip(provider.preflight.details.join("; "))}`;
   return `${route} -> agent ${plan.agentName} (${plan.access ?? "unknown"} access), ${ready}`;
 }
