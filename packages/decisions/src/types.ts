@@ -1,10 +1,10 @@
-import type { DecisionId, DecisionRequest, DecisionResponse, RunId } from "@adaptive-harness/core";
+import type { DecisionId, DecisionPhase, DecisionRequest, DecisionResponse, RunId } from "@adaptive-harness/core";
 
 export type DecisionMode = "jev" | "deterministic";
 
 export interface DecisionContext {
   runId: RunId;
-  phase: "route" | "completion" | "handoff" | "context" | "tool" | "permission" | "delegation";
+  phase: DecisionPhase;
   mode?: DecisionMode;
   reason?: string;
 }
