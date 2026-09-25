@@ -18,7 +18,11 @@ const clip = (text: string, max = 160) => {
 /** One line summarizing a dry run's plan. */
 export function describePlan(plan: RunPlan): string {
   const route = plan.route ? `${plan.route.taskKind} task` : "no route";
-  if (!plan.agentName || plan.unresolved) return `${route}, unresolved: ${plan.unresolved ?? "no agent selected"}`;
+  if (plan.unresolved) {
+    const { reason, detail } = plan.unresolved;
+    return `${route}, unresolved: ${reason}${detail ? ` (${detail})` : ""}`;
+  }
+  if (!plan.agentName) return `${route}, no agent selected`;
   const provider = plan.provider;
   const ready = !provider
     ? "no provider"

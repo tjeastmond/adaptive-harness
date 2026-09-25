@@ -578,7 +578,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     } catch (error) {
       if (!(error instanceof DecisionHandoffError)) throw error;
       if (error.action === "fail") return this.#fail(drive, `route decision ${error.reason}`);
-      if (drive.run.dryRun) return this.#plan(drive, { unresolved: `route decision ${error.reason}` });
+      if (drive.run.dryRun) {
+        return this.#plan(drive, { unresolved: { reason: "decision-handoff", detail: error.reason } });
+      }
       const agents = Object.entries(this.#settings.agents)
         .filter(([, agent]) => agent.purpose === "implementation" && !agent.readOnly)
         .map(([name]) => name);
@@ -599,9 +601,12 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       content: route,
     });
     const selected = selectInitialAgent(route, this.#settings);
+    if (selected !== "ask-user" && !Object.hasOwn(this.#settings.agents, selected)) {
+      return this.#fail(drive, `Route selected unknown agent ${selected}`);
+    }
     if (drive.run.dryRun) {
       const plan: RunPlan = { decisionId: response.id, route };
-      if (selected === "ask-user") return this.#plan(drive, { ...plan, unresolved: "requirements unclear" });
+      if (selected === "ask-user") return this.#plan(drive, { ...plan, unresolved: { reason: "requirements-unclear" } });
       return this.#plan(drive, { ...plan, ...(await this.#planAgent(selected)) });
     }
     if (selected === "ask-user") {
@@ -614,8 +619,6 @@ export class LocalHarnessRuntime implements HarnessRuntime {
         },
       );
     }
-    if (!Object.hasOwn(this.#settings.agents, selected))
-      return this.#fail(drive, `Route selected unknown agent ${selected}`);
     await this.#assign(drive, "implementation", selected, route.taskKind);
   }
 
@@ -639,7 +642,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
 
   async #planAgent(agentName: string): Promise<Omit<RunPlan, "decisionId" | "route">> {
     const agent = this.#settings.agents[agentName];
-    if (!agent) return { agentName, unresolved: `route selected unknown agent ${agentName}` };
+    if (!agent) throw new Error(`Unknown agent ${agentName}`);
     const provider = this.#settings.providers[agent.provider];
     const adapter = this.#workers[agent.provider];
     const preflight: ProviderPreflight = adapter

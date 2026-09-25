@@ -325,5 +325,5 @@ export interface RunPlan {
   access?: TaskAccessMode;
   provider?: { name: string; kind: string; preflight: ProviderPreflight };
   /** Why routing could not select an agent without a person, when it could not. */
-  unresolved?: string;
+  unresolved?: { reason: "decision-handoff" | "requirements-unclear"; detail?: string };
 }

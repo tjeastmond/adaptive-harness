@@ -375,7 +375,7 @@ test("a dry run with unclear requirements records an unresolved plan instead of 
   expect(worker.requests).toHaveLength(0);
   expect(await store.listApprovals(run.id, "pending")).toEqual([]);
   const planned = (await store.listEvents(run.id, 0, 1000)).find((event) => event.payload.type === "run.planned");
-  expect(planned?.payload).toMatchObject({ plan: { unresolved: "requirements unclear" } });
+  expect(planned?.payload).toMatchObject({ plan: { unresolved: { reason: "requirements-unclear" } } });
 });
 
 test("a route to an unknown agent fails live and dry runs alike", async () => {
