@@ -130,6 +130,7 @@ class FakeWorker implements WorkerAdapter {
     const id = `call-${crypto.randomUUID()}`;
     await emit({ type: "session.started", callId: id, at });
     await emit({ type: "message", role: "assistant", text: "writing the feature", at });
+    await emit({ type: "message", role: "system", text: "Skipped 1 provider output line(s)", at });
     if (request.task.access.mode === "write")
       writeFileSync(join(request.workspace, `feature-${this.requests.length}.txt`), "feature\n");
     return {
@@ -183,6 +184,7 @@ test("run streams events and reports a completed run", async () => {
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("decision mode: jev");
   expect(result.stdout).toContain("worker: writing the feature");
+  expect(result.stdout).toContain("worker notice: Skipped 1 provider output line(s)");
   expect(result.stdout).toMatch(/Run run-[\w-]+: completed/);
   expect(worker.requests[0]?.workspace).toBe(workspace);
 

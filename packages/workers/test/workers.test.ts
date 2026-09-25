@@ -25,7 +25,7 @@ if (${JSON.stringify(mode)} === "invalid") { console.log("{invalid"); process.ex
 if (${JSON.stringify(mode)} === "exit") { console.error("failure"); process.exit(7); }
 if (${JSON.stringify(mode)} === "write") writeFileSync(${JSON.stringify(join(dir, "worker-change.txt"))}, "changed");
 if (${JSON.stringify(mode)} === "callback") { writeFileSync(${JSON.stringify(join(dir, ".git", "pid"))}, String(process.pid)); console.log("event"); await new Promise((resolve) => setTimeout(resolve, 30_000)); }
-if (${JSON.stringify(mode)} === "oversize") { console.log(JSON.stringify({type:"unknown",payload:"x".repeat(100_000)})); process.exit(0); }
+if (${JSON.stringify(mode)} === "oversize") console.log(JSON.stringify({type:"unknown",payload:"x".repeat(100_000)}));
 if (${JSON.stringify(mode)} === "secret") { console.log(JSON.stringify({type:"unknown",value:"secret-value"})); console.log(JSON.stringify({type:"tool_call",item:{name:"secret-value"}})); }
 console.log(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(mode)} === "secret" ? "secret-value" : "session-1"}));
 console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify({summary:${JSON.stringify(mode)} === "secret" ? "secret-value" : "done",completed:true,filesChanged:[],checksRun:[],concerns:[]})}}));
@@ -152,12 +152,23 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     });
   });
 
-  test("rejects an oversized JSONL event", async () => {
+  test("skips an oversized JSONL event without failing the call", async () => {
     const { dir, command } = await fixture("oversize");
-    const result = await new Adapter({ command }).execute(request(dir), () => {});
-    expect(result.status).toBe("failed");
-    expect(result.error).toBe("Invalid provider JSONL");
+    const events: WorkerStreamEvent[] = [];
+    const result = await new Adapter({ command }).execute(request(dir), (event) => {
+      events.push(event);
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.report?.summary).toBe("done");
     expect(result.finalOutput.length).toBeLessThanOrEqual(8000);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "message",
+        role: "system",
+        text: "Skipped 1 provider output line(s) over 64000 bytes",
+      }),
+    );
+    expect(JSON.stringify(events)).not.toContain("x".repeat(1000));
   });
 
   test("detects files changed during a read-only worker call", async () => {
@@ -194,15 +205,16 @@ test("Cursor preflight rejects an explicitly configured Grok CLI", async () => {
   });
 });
 
-test("JSONL parser bounds oversized lines, accepts split UTF-8, and continues", async () => {
+test("JSONL parser drops oversized lines, counts invalid ones, accepts split UTF-8, and continues", async () => {
   const values: unknown[] = [];
   const parser = new BoundedJsonlParser((value) => {
     values.push(value);
   }, 32);
-  const encoded = new TextEncoder().encode(`{"x":"é"}\n${"x".repeat(100)}\n{"ok":true}\n`);
+  const encoded = new TextEncoder().encode(`{"x":"é"}\n${"x".repeat(100)}\n{bad\n{"ok":true}\n${"y".repeat(100)}`);
   for (let i = 0; i < encoded.length; i += 3) await parser.write(encoded.subarray(i, i + 3));
   await parser.finish();
   expect(values).toEqual([{ x: "é" }, { ok: true }]);
+  expect(parser.oversizedCount).toBe(2);
   expect(parser.invalidCount).toBe(1);
 });
 
