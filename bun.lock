@@ -29,14 +29,6 @@
         "@adaptive-harness/runtime": "workspace:*",
       },
     },
-    "apps/daemon": {
-      "name": "@adaptive-harness/daemon",
-      "version": "0.1.0",
-    },
-    "apps/web": {
-      "name": "@adaptive-harness/web",
-      "version": "0.1.0",
-    },
     "packages/config": {
       "name": "@adaptive-harness/config",
       "version": "0.1.0",
@@ -86,10 +78,6 @@
         "@adaptive-harness/workspace": "workspace:*",
       },
     },
-    "packages/telemetry": {
-      "name": "@adaptive-harness/telemetry",
-      "version": "0.1.0",
-    },
     "packages/verification": {
       "name": "@adaptive-harness/verification",
       "version": "0.1.0",
@@ -116,8 +104,6 @@
 
     "@adaptive-harness/core": ["@adaptive-harness/core@workspace:packages/core"],
 
-    "@adaptive-harness/daemon": ["@adaptive-harness/daemon@workspace:apps/daemon"],
-
     "@adaptive-harness/decisions": ["@adaptive-harness/decisions@workspace:packages/decisions"],
 
     "@adaptive-harness/persistence": ["@adaptive-harness/persistence@workspace:packages/persistence"],
@@ -126,11 +112,7 @@
 
     "@adaptive-harness/runtime": ["@adaptive-harness/runtime@workspace:packages/runtime"],
 
-    "@adaptive-harness/telemetry": ["@adaptive-harness/telemetry@workspace:packages/telemetry"],
-
     "@adaptive-harness/verification": ["@adaptive-harness/verification@workspace:packages/verification"],
-
-    "@adaptive-harness/web": ["@adaptive-harness/web@workspace:apps/web"],
 
     "@adaptive-harness/workers": ["@adaptive-harness/workers@workspace:packages/workers"],
 
