@@ -22,7 +22,8 @@ writeFileSync(${JSON.stringify(join(dir, ".git", "stdin.txt"))}, prompt);
 if (${JSON.stringify(mode)} === "env") writeFileSync(${JSON.stringify(join(dir, ".git", "env.json"))}, JSON.stringify({ jev: process.env.HARNESS_TEST_JEV_KEY ?? null, worker: process.env.TEST_SECRET ?? null }));
 if (${JSON.stringify(mode)} === "timeout") await new Promise((resolve) => setTimeout(resolve, 30_000));
 if (${JSON.stringify(mode)} === "invalid") { console.log("{invalid"); process.exit(0); }
-if (${JSON.stringify(mode)} === "exit") { console.error("failure"); process.exit(7); }
+if (${JSON.stringify(mode)} === "longexit") { console.error("x".repeat(600) + "\\x1b]0;title\\x07 tail-end"); process.exit(3); }
+if (${JSON.stringify(mode)} === "exit") { console.error("\\x1b[33mfailure\\x1b[0m\\n  needs secret-value\\n"); process.exit(7); }
 if (${JSON.stringify(mode)} === "write") writeFileSync(${JSON.stringify(join(dir, "worker-change.txt"))}, "changed");
 if (${JSON.stringify(mode)} === "callback") { writeFileSync(${JSON.stringify(join(dir, ".git", "pid"))}, String(process.pid)); console.log("event"); await new Promise((resolve) => setTimeout(resolve, 30_000)); }
 if (${JSON.stringify(mode)} === "oversize") console.log(JSON.stringify({type:"unknown",payload:"x".repeat(100_000)}));
@@ -104,8 +105,22 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     const { dir, command } = await fixture(mode);
     const result = await new Adapter({ command }).execute(request(dir), () => {});
     expect(result.status).toBe(expected);
-    if (mode === "exit") expect(result.exitCode).toBe(7);
+    if (mode === "exit") {
+      expect(result.exitCode).toBe(7);
+      expect(result.error).toBe("Provider exited with code 7: failure needs [REDACTED]");
+    }
     if (mode === "invalid") expect(result.error).toBe("Invalid provider JSONL");
+  });
+
+  test("keeps only the end of a long stderr without terminal escapes", async () => {
+    const { dir, command } = await fixture("longexit");
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.status).toBe("failed");
+    const tail = result.error?.replace("Provider exited with code 3: ", "") ?? "";
+    expect(tail.startsWith("…")).toBe(true);
+    expect(tail.endsWith("x tail-end")).toBe(true);
+    expect(tail).toHaveLength(501);
+    expect(tail).not.toContain("title");
   });
 
   test("cancels an active process by emitted call ID", async () => {
