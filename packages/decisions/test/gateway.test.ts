@@ -10,6 +10,7 @@ import { DeterministicDecisionProvider } from "../src/deterministic.ts";
 import { type DecisionAudit, DecisionHandoffError, DefaultDecisionGateway } from "../src/gateway.ts";
 import { JevUnavailableError } from "../src/jev.ts";
 import {
+  exhaustedBudget,
   normalizeCompletionDecision,
   normalizeRouteDecision,
   selectInitialAgent,
@@ -151,7 +152,10 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
     budget: { workerCalls: 1, inputTokens: 100, outputTokens: 10, estimatedCostUsd: 0, elapsedMs: 1 },
   } as HarnessRun;
   const verification = { ok: true, commands: [], gitDiffStat: "", filesChanged: [] } satisfies VerificationResult;
-  const config = { routing, limits: { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 1_000, maxCostUsd: 10 } };
+  const config = {
+    routing,
+    limits: { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 1_000, maxCostUsd: 10, maxElapsedMs: 60_000 },
+  };
   const beforeReview = { reviewCompletedForAttempt: false, editsSinceReview: false };
   expect(selectNextAction(completion, verification, run, config, beforeReview)).toBe("fail");
   const activeRun = { ...run, currentStep: 1 };
@@ -168,4 +172,24 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
       editsSinceReview: true,
     }),
   ).toBe("review");
+  const satisfied = {
+    ...completion,
+    requirementsSatisfied: 0.95,
+    implementationRiskScore: 1,
+    moreWorkUseful: 0.1,
+    needsIndependentReview: 0.1,
+    nextAction: "done" as const,
+  };
+  const spent = { ...activeRun, budget: { ...activeRun.budget, elapsedMs: 60_000 } };
+  expect(selectNextAction(satisfied, verification, spent, config, beforeReview)).toBe("done");
+  expect(
+    selectNextAction(
+      { ...satisfied, moreWorkUseful: 0.9 },
+      { ...verification, ok: false },
+      spent,
+      config,
+      beforeReview,
+    ),
+  ).toBe("fail");
+  expect(exhaustedBudget(spent, config.limits)).toBe("time-limit");
 });

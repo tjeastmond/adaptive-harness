@@ -238,6 +238,7 @@ limits:
   maxWorkerCalls: 5
   maxInputTokens: 1000000
   maxCostUsd: 10
+  maxElapsedMs: 3600000
   workerTimeoutMs: 1200000
 
 git:
@@ -329,6 +330,7 @@ maxRetriesPerTask = 2
 maxWorkerCalls = 5
 maxInputTokens = 1000000
 maxCostUsd = 10.0
+maxElapsedMs = 3600000
 workerTimeoutMs = 1200000
 
 [[verification.commands]]
@@ -857,6 +859,7 @@ export const HarnessConfigSchema = z
         maxWorkerCalls: z.number().int().positive().default(5),
         maxInputTokens: z.number().int().positive().default(1_000_000),
         maxCostUsd: z.number().positive().default(10),
+        maxElapsedMs: z.number().int().positive().default(3_600_000),
         workerTimeoutMs: z.number().int().positive().default(1_200_000),
       })
       .strict(),

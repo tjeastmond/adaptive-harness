@@ -195,9 +195,10 @@ abstract class CliWorker implements WorkerAdapter {
           timeoutMs: 5000,
           maxCaptureBytes: 64_000,
         });
+      // The runtime owns repository policy. Adapters only attribute status entries that change during the call.
       const before = await gitStatus();
-      const cleanWorkspace = before.status === "exited" && before.exitCode === 0 && !before.truncated && !before.stdout;
-      if (!cleanWorkspace) {
+      const beforeValid = before.status === "exited" && before.exitCode === 0 && !before.truncated;
+      if (!beforeValid) {
         return {
           id,
           provider: this.kind,
@@ -209,7 +210,7 @@ abstract class CliWorker implements WorkerAdapter {
           finalOutput: "",
           usage: {},
           rawEventCount: 0,
-          error: "Workspace Git status unavailable or not clean",
+          error: "Workspace Git status unavailable",
         };
       }
       if (this.kind === "codex-cli") {
@@ -228,10 +229,11 @@ abstract class CliWorker implements WorkerAdapter {
       await parser.finish();
       const git = await gitStatus();
       const gitValid = git.status === "exited" && git.exitCode === 0 && !git.truncated;
+      const beforeEntries = new Set(before.stdout.split("\0").filter(Boolean));
       const filesChanged = gitValid
         ? git.stdout
             .split("\0")
-            .filter(Boolean)
+            .filter((line) => line && !beforeEntries.has(line))
             .slice(0, 100)
             .map((line) => ({
               path: line.slice(3),

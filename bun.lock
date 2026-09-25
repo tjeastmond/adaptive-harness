@@ -77,10 +77,13 @@
       "name": "@adaptive-harness/runtime",
       "version": "0.1.0",
       "dependencies": {
+        "@adaptive-harness/config": "workspace:*",
         "@adaptive-harness/core": "workspace:*",
         "@adaptive-harness/decisions": "workspace:*",
         "@adaptive-harness/persistence": "workspace:*",
         "@adaptive-harness/protocol": "workspace:*",
+        "@adaptive-harness/verification": "workspace:*",
+        "@adaptive-harness/workspace": "workspace:*",
       },
     },
     "packages/telemetry": {
@@ -90,6 +93,9 @@
     "packages/verification": {
       "name": "@adaptive-harness/verification",
       "version": "0.1.0",
+      "dependencies": {
+        "@adaptive-harness/core": "workspace:*",
+      },
     },
     "packages/workers": {
       "name": "@adaptive-harness/workers",
@@ -98,6 +104,9 @@
     "packages/workspace": {
       "name": "@adaptive-harness/workspace",
       "version": "0.1.0",
+      "dependencies": {
+        "@adaptive-harness/core": "workspace:*",
+      },
     },
   },
   "packages": {
