@@ -38,6 +38,8 @@ export interface VerificationOptions {
   redactValues?: string[];
   /** Environment variable names whose inherited or overridden values must be redacted. */
   redactEnvironment?: string[];
+  /** Harness-only variables, such as the Jev API key, removed from every command's environment. */
+  withheldEnvironment?: string[];
   signal?: AbortSignal;
 }
 
@@ -91,6 +93,12 @@ class StreamRedactor {
   }
 }
 
+function commandEnvironment(command: VerificationCommand, withheld: string[]): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env, ...command.env };
+  for (const name of withheld) delete env[name];
+  return env;
+}
+
 async function runOne(
   command: VerificationCommand,
   workspace: string,
@@ -122,7 +130,7 @@ async function runOne(
   try {
     child = Bun.spawn([command.command, ...command.args], {
       cwd: workspace,
-      env: { ...process.env, ...command.env },
+      env: commandEnvironment(command, options.withheldEnvironment ?? []),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

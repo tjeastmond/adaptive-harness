@@ -46,6 +46,7 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 
 ## Implementation expectations
 
+- Supported platforms are macOS (primary) and other Unix systems. Windows is not supported; do not add Windows-specific code paths or review findings.
 - Keep changes narrowly scoped and add focused tests with the implementation.
 - Run the relevant Bun checks before handoff; do not claim verification that was not run.
 - Request an independent, read-only Dr. Nit review for every PR before merging, and for substantial changes made directly on `main` before handoff. Scope the review to the PR's changes (or the direct change) rather than the whole repository. Its skill is at `~/.codex/skills/dr-nit/SKILL.md`; agents that do not load Codex skills automatically should read that file and follow its scoped review and reporting instructions. Address findings and rerun relevant checks before merging or handing off.

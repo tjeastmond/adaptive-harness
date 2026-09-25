@@ -57,17 +57,27 @@ class GitCommandError extends Error {
   }
 }
 
+/**
+ * Variables Git needs for these local, read-only commands. Git can run commands named in repository config
+ * (for example `core.fsmonitor`), which a worker may have edited, so they get no harness secrets.
+ */
+const GIT_ENVIRONMENT = ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "XDG_CONFIG_HOME"];
+
+function gitEnvironment(): Record<string, string> {
+  return Object.fromEntries(GIT_ENVIRONMENT.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])));
+}
+
 async function git(workspace: string, args: string[]): Promise<string> {
-  let process: ReturnType<typeof Bun.spawn>;
+  let child: ReturnType<typeof Bun.spawn>;
   try {
-    process = Bun.spawn(["git", "-C", workspace, ...args], { stdout: "pipe", stderr: "pipe" });
+    child = Bun.spawn(["git", "-C", workspace, ...args], { env: gitEnvironment(), stdout: "pipe", stderr: "pipe" });
   } catch (error) {
     throw new Error(`Unable to start Git: ${String(error)}`, { cause: error });
   }
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout as ReadableStream<Uint8Array>).text(),
-    new Response(process.stderr as ReadableStream<Uint8Array>).text(),
-    process.exited,
+    new Response(child.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(child.stderr as ReadableStream<Uint8Array>).text(),
+    child.exited,
   ]);
   if (exitCode !== 0) throw new GitCommandError(args, stderr, exitCode);
   return stdout;

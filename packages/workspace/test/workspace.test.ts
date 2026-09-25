@@ -194,3 +194,23 @@ describe("storage placement", () => {
     expect(await isUnignoredRepositoryPath(nonRepository, join(nonRepository, "harness.sqlite"))).toBe(false);
   });
 });
+
+test("Git helpers give commands from repository config no harness secrets", async () => {
+  const dir = await repository();
+  const hook = join(dir, ".git", "fsmonitor-hook");
+  const seen = join(dir, ".git", "fsmonitor-env");
+  await writeFile(hook, `#!/bin/sh\nprintf "%s" "$HARNESS_WORKSPACE_TEST_SECRET" > ${JSON.stringify(seen)}\nexit 1\n`);
+  await chmod(hook, 0o755);
+  await command(dir, "config", "core.fsmonitor", hook);
+  // Bun.spawn without `env` passes the startup environment, so the secret must be in a child's real environment.
+  const script = `import { captureGitState } from ${JSON.stringify(join(import.meta.dir, "../src/index.ts"))};
+await captureGitState(${JSON.stringify(dir)});`;
+  const child = Bun.spawn(["bun", "-e", script], {
+    env: { ...process.env, HARNESS_WORKSPACE_TEST_SECRET: "jev-secret" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+  expect(await Bun.file(seen).text()).toBe("");
+});

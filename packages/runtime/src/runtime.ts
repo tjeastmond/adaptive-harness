@@ -817,6 +817,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const verification = await verifyWorkspace(baseline, this.#settings.verification, {
       signal: drive.abort.signal,
       redactEnvironment: this.#settings.telemetry.redactEnvironment,
+      withheldEnvironment: [this.#settings.decision.jev.apiKeyEnv],
     });
     // An interrupted verification is not evidence; it runs again when the run resumes.
     if (drive.stop) return;

@@ -219,6 +219,7 @@ function harness(
     store?: SqliteHarnessStore;
     owner?: string;
     workspace?: string;
+    configure?: (settings: HarnessConfig) => void;
   } = {},
 ) {
   const workspace = options.workspace ?? repository();
@@ -229,6 +230,7 @@ function harness(
   const worker = new FakeWorker(options.steps ?? [{ write: { "feature.txt": "feature\n" } }], options.clock);
   const clock = options.clock;
   const settings = config(options.limits, options.git);
+  options.configure?.(settings);
   const runtimeOptions: LocalRuntimeOptions = {
     config: {
       path: join(workspace, "harness.yaml"),
@@ -301,6 +303,42 @@ test("a run routes, works, verifies, and completes with an ordered event log", a
   for await (const event of runtime.subscribe(run.id)) streamed.push(event.payload.type);
   expect(streamed).toEqual(types);
   await expect(runtime.startRun(run.id)).rejects.toBeInstanceOf(RuntimeUsageError);
+});
+
+test("verification commands never see the Jev API key", async () => {
+  const shell = (name: string, script: string) => ({
+    name,
+    command: "sh",
+    args: ["-c", script],
+    timeoutMs: 10_000,
+    env: {},
+  });
+  const { runtime, store, create } = harness({
+    configure: (settings) => {
+      settings.decision.jev.apiKeyEnv = "HARNESS_TEST_JEV_KEY";
+      settings.verification.commands = [
+        shell("jev-key-withheld", 'test -z "$HARNESS_TEST_JEV_KEY"'),
+        shell("other-env-kept", 'test -n "$HARNESS_TEST_OTHER_KEY"'),
+      ];
+    },
+  });
+  process.env.HARNESS_TEST_JEV_KEY = "jev-secret";
+  process.env.HARNESS_TEST_OTHER_KEY = "kept";
+  try {
+    const run = await create();
+    await runtime.startRun(run.id);
+  } finally {
+    delete process.env.HARNESS_TEST_JEV_KEY;
+    delete process.env.HARNESS_TEST_OTHER_KEY;
+  }
+  const [run] = await runtime.listRuns();
+  const verified = (await store.listEvents(run?.id ?? "", 0, 1000)).flatMap((event) =>
+    event.payload.type === "verification.completed" ? [event.payload.result] : [],
+  );
+  expect(verified[0]?.commands.map((command) => [command.name, command.exitCode])).toEqual([
+    ["jev-key-withheld", 0],
+    ["other-env-kept", 0],
+  ]);
 });
 
 test("idempotent creation returns the existing run and config mismatches are rejected", async () => {
