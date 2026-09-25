@@ -92,8 +92,8 @@ function redact(value: string, environment: Record<string, string>): string {
 /** The redacted end of a failed provider's stderr, on one line, where CLIs usually explain the failure. */
 function stderrTail(stderr: string, environment: Record<string, string>): string {
   const text = redact(stderr, environment)
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips terminal escapes and control characters.
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, " ")
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips CSI and OSC terminal escapes and control characters.
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|[\x00-\x1f\x7f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > 500 ? `…${text.slice(-500)}` : text;
