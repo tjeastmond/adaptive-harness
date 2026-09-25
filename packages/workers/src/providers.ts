@@ -15,7 +15,13 @@ import { BoundedJsonlParser } from "./jsonl.ts";
 import { runProcess } from "./process.ts";
 
 type Emit = (event: WorkerStreamEvent) => void | Promise<void>;
-type CodexConfig = { command?: string; model?: string | null; extraArgs?: string[] };
+type CodexConfig = {
+  command?: string;
+  model?: string | null;
+  extraArgs?: string[];
+  /** Harness-only variables, such as the Jev API key, that no process started by the adapter may see. */
+  withheldEnvironment?: string[];
+};
 
 const reportSchema = {
   type: "object",
@@ -104,12 +110,16 @@ abstract class CliWorker implements WorkerAdapter {
   abstract readonly kind: "codex-cli" | "cursor-cli";
   private readonly active = new Map<string, AbortController>();
   constructor(protected readonly config: CodexConfig) {}
+  private get withheld(): readonly string[] {
+    return this.config.withheldEnvironment ?? [];
+  }
   protected abstract args(request: WorkerRequest, reportPath?: string): string[];
   protected abstract executable(): string;
 
   async preflight(): Promise<ProviderPreflight> {
     const result = await runProcess({
       command: [this.executable(), "--version"],
+      withheldEnv: this.withheld,
       timeoutMs: 5000,
       maxCaptureBytes: 1024,
     });
@@ -197,6 +207,7 @@ abstract class CliWorker implements WorkerAdapter {
         runProcess({
           command: ["git", "status", "--porcelain=v1", "-z"],
           cwd: request.workspace,
+          withheldEnv: this.withheld,
           timeoutMs: 5000,
           maxCaptureBytes: 64_000,
         });
@@ -226,6 +237,7 @@ abstract class CliWorker implements WorkerAdapter {
         command: [this.executable(), ...this.args(request, temp ? join(temp, "report-schema.json") : undefined)],
         cwd: request.workspace,
         env: request.environment,
+        withheldEnv: this.withheld,
         ...(this.kind === "codex-cli" ? { stdin: request.instructions } : {}),
         timeoutMs: request.timeoutMs,
         signal: controller.signal,

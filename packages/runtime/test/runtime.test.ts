@@ -15,7 +15,12 @@ import type {
 } from "@adaptive-harness/core";
 import { SqliteHarnessStore } from "@adaptive-harness/persistence";
 import type { HarnessEvent } from "@adaptive-harness/protocol";
-import { LocalHarnessRuntime, type LocalRuntimeOptions, RuntimeUsageError } from "../src/runtime.ts";
+import {
+  createConfiguredWorkers,
+  LocalHarnessRuntime,
+  type LocalRuntimeOptions,
+  RuntimeUsageError,
+} from "../src/runtime.ts";
 
 const dirs: string[] = [];
 const stores: SqliteHarnessStore[] = [];
@@ -67,6 +72,26 @@ function config(
     telemetry: {},
   });
 }
+
+test("configured workers never see the Jev API key", async () => {
+  const dir = tempDir("harness-worker-env-");
+  const command = join(dir, "fake-agent");
+  writeFileSync(command, '#!/bin/sh\nprintf "fake %s|%s" "$HARNESS_TEST_JEV_KEY" "$HARNESS_TEST_WORKER_KEY"\n', {
+    mode: 0o755,
+  });
+  const configured = config();
+  configured.decision.jev.apiKeyEnv = "HARNESS_TEST_JEV_KEY";
+  configured.providers.fake = { ...configured.providers.fake, command } as HarnessConfig["providers"][string];
+  process.env.HARNESS_TEST_JEV_KEY = "jev-secret";
+  process.env.HARNESS_TEST_WORKER_KEY = "worker-auth";
+  try {
+    const preflight = await createConfiguredWorkers(configured).fake?.preflight();
+    expect(preflight?.version).toBe("fake |worker-auth");
+  } finally {
+    delete process.env.HARNESS_TEST_JEV_KEY;
+    delete process.env.HARNESS_TEST_WORKER_KEY;
+  }
+});
 
 const choice = (value: string, confidence = 0.9): DecisionAnswer => ({
   type: "choice",

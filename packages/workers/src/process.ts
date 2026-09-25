@@ -10,12 +10,21 @@ export interface ProcessResult {
 export interface ProcessOptions {
   command: string[];
   cwd?: string;
+  /** Merged over the inherited environment. */
   env?: Record<string, string>;
+  /** Variables removed from the child environment, whether inherited or given in `env`. */
+  withheldEnv?: readonly string[];
   stdin?: string;
   timeoutMs: number;
   signal?: AbortSignal;
   onStdout?: (chunk: Uint8Array) => void | Promise<void>;
   maxCaptureBytes?: number;
+}
+
+function childEnvironment(options: ProcessOptions): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env, ...options.env };
+  for (const name of options.withheldEnv ?? []) delete env[name];
+  return env;
 }
 
 /** Execute one process with bounded capture and process-group termination. */
@@ -29,7 +38,7 @@ export async function runProcess(options: ProcessOptions): Promise<ProcessResult
   try {
     child = Bun.spawn(options.command, {
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      env: { ...process.env, ...options.env },
+      env: childEnvironment(options),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
