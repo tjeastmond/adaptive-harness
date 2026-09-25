@@ -48,7 +48,10 @@ export function describeEvent(event: HarnessEvent): string | undefined {
     case "worker.started":
       return `worker started: task ${event.taskId}`;
     case "worker.event":
-      if (event.event.type === "message") return `worker: ${clip(event.event.text)}`;
+      if (event.event.type === "message") {
+        // System messages are notices from the adapter, not provider output.
+        return `${event.event.role === "system" ? "worker notice" : "worker"}: ${clip(event.event.text)}`;
+      }
       if (event.event.type === "tool.started") return `worker tool: ${event.event.name}`;
       return undefined;
     case "worker.completed": {
