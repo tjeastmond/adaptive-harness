@@ -124,6 +124,8 @@ export interface Usage {
   cachedInputTokens?: number;
   outputTokens?: number;
   estimatedCostUsd?: number;
+  /** Harness estimate because the provider reported no usage; a lower bound. */
+  estimated?: boolean;
 }
 
 export interface FileChange {
@@ -293,6 +295,8 @@ export interface VerificationResult {
 
 export interface RunBudget {
   workerCalls: number;
+  /** Number of worker calls whose usage was estimated; optional so stored runs stay readable. */
+  estimatedWorkerCalls?: number;
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;

@@ -2,7 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerRequest, WorkerStreamEvent } from "@adaptive-harness/core";
-import { BoundedJsonlParser, CodexWorkerAdapter, CursorWorkerAdapter, runProcess } from "../src/index.ts";
+import {
+  BoundedJsonlParser,
+  CodexWorkerAdapter,
+  CursorWorkerAdapter,
+  estimateTokens,
+  runProcess,
+} from "../src/index.ts";
 
 const dirs: string[] = [];
 async function fixture(mode: string, version = "fake-agent 1.0") {
@@ -44,6 +50,12 @@ if (${JSON.stringify(mode)} === "nomessage-cancel") {
 if (${JSON.stringify(mode)} !== "nomessage" && ${JSON.stringify(mode)} !== "nomessage-cancel") {
 console.log(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(mode)} === "secret" ? "secret-value" : "session-1"}));
 console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify({summary:${JSON.stringify(mode)} === "secret" ? "secret-value" : "done",completed:true,filesChanged:[],checksRun:[],concerns:[]})}}));
+if (${JSON.stringify(mode)} === "usage") console.log(JSON.stringify({type:"usage",usage:{input_tokens:12,output_tokens:7}}));
+if (${JSON.stringify(mode)} === "partial-usage") console.log(JSON.stringify({type:"usage",usage:{cached_input_tokens:9}}));
+if (${JSON.stringify(mode)} === "message-cancel") {
+  console.log(JSON.stringify({type:"assistant",message:{text:"more assistant text"}}));
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+}
 }
 `,
   );
@@ -149,6 +161,53 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
       }
     });
     expect(result.status).toBe("cancelled");
+  });
+
+  test("estimates usage from instructions and streamed assistant text after cancellation", async () => {
+    const { dir, command } = await fixture("message-cancel");
+    const adapter = new Adapter({ command });
+    const input = { ...request(dir), timeoutMs: 5000 };
+    let callId: string | undefined;
+    let streamedText = "";
+    const result = await adapter.execute(input, (event) => {
+      if (event.type === "session.started" && event.callId) callId = event.callId;
+      if (event.type === "message" && event.role === "assistant") {
+        streamedText += event.text;
+        if (event.text === "more assistant text" && callId) void adapter.cancel(callId);
+      }
+    });
+    expect(result.status).toBe("cancelled");
+    expect(result.usage).toEqual({
+      inputTokens: estimateTokens(input.instructions),
+      outputTokens: estimateTokens(streamedText),
+      estimated: true,
+    });
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+  });
+
+  test("keeps provider-reported usage without an estimated flag", async () => {
+    const { dir, command } = await fixture("usage");
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
+  });
+
+  test("estimates the token counts a partial usage report leaves out", async () => {
+    const { dir, command } = await fixture("partial-usage");
+    const input = request(dir);
+    const result = await new Adapter({ command }).execute(input, () => {});
+    expect(result.usage).toMatchObject({
+      cachedInputTokens: 9,
+      inputTokens: estimateTokens(input.instructions),
+      estimated: true,
+    });
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+  });
+
+  test("charges no usage when the provider cannot start", async () => {
+    const { dir } = await fixture("usage");
+    const result = await new Adapter({ command: join(dir, "missing-agent") }).execute(request(dir), () => {});
+    expect(result.status).toBe("failed");
+    expect(result.usage).toEqual({});
   });
 
   test("leaves finalOutput empty when cancelled before any assistant message", async () => {

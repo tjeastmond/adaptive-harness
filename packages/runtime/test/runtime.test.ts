@@ -541,6 +541,19 @@ test("streamed token and cost usage beyond the budget cancels the call and fails
   }
 });
 
+test("estimated usage from a failed worker counts toward the run budget", async () => {
+  const { runtime, create } = harness({
+    steps: [{ fail: true, usage: { inputTokens: 120, outputTokens: 3, estimated: true } }],
+    limits: { maxInputTokens: 100 },
+  });
+  const run = await create();
+  await runtime.startRun(run.id);
+  const failed = await runtime.getRun(run.id);
+  expect(failed.status).toBe("failed");
+  expect(failed.budget).toMatchObject({ inputTokens: 120, outputTokens: 3, estimatedWorkerCalls: 1 });
+  expect(failed.failureReason).toBe("token-limit");
+});
+
 test("active time beyond the time limit stops the run and paused time is not charged", async () => {
   const clock = { now: Date.parse("2026-09-25T12:00:00.000Z") };
   const { runtime, create } = harness({

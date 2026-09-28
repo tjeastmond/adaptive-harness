@@ -43,7 +43,14 @@ describe("runs CLI", () => {
       configPath,
       configHash: "fixture-hash",
       currentStep: 0,
-      budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, elapsedMs: 0 },
+      budget: {
+        workerCalls: 2,
+        inputTokens: 120,
+        outputTokens: 30,
+        estimatedCostUsd: 0,
+        elapsedMs: 0,
+        estimatedWorkerCalls: 1,
+      },
       createdAt: "2026-09-23T00:00:00.000Z",
       updatedAt: "2026-09-23T00:00:00.000Z",
     };
@@ -81,6 +88,12 @@ describe("runs CLI", () => {
         { sequence: 2, payload: { type: "run.paused" } },
       ],
     });
+
+    const shownText = spawn(dir, "runs", "show", "run-1");
+    expect(shownText.exitCode).toBe(0);
+    expect(shownText.stdout.toString()).toContain(
+      "Updated: 2026-09-23T00:00:00.000Z\nBudget: 2 worker calls, 120 input / 30 output tokens (1 call estimated)",
+    );
 
     const firstPage = spawn(dir, "runs", "show", "run-1", "--events", "--limit", "1", "--json");
     expect(JSON.parse(firstPage.stdout.toString())).toMatchObject({

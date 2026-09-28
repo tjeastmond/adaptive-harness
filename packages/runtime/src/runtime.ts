@@ -833,6 +833,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     budget.inputTokens += result.usage.inputTokens ?? 0;
     budget.outputTokens += result.usage.outputTokens ?? 0;
     budget.estimatedCostUsd += result.usage.estimatedCostUsd ?? 0;
+    if (result.usage.estimated) budget.estimatedWorkerCalls = (budget.estimatedWorkerCalls ?? 0) + 1;
     await this.#appendOnce({
       id: `${result.id}:result`,
       runId,

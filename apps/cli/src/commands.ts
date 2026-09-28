@@ -57,7 +57,7 @@ export function describeEvent(event: HarnessEvent): string | undefined {
       return undefined;
     case "worker.completed": {
       const detail = event.result.report?.summary ?? event.result.error ?? "";
-      return `worker ${event.result.status}${detail ? `: ${clip(detail)}` : ""}`;
+      return `worker ${event.result.status}${detail ? `: ${clip(detail)}` : ""}${event.result.usage.estimated ? " (usage estimated)" : ""}`;
     }
     case "verification.completed": {
       const failed = event.result.commands
