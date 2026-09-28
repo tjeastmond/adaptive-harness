@@ -29,8 +29,22 @@ if (${JSON.stringify(mode)} === "write") writeFileSync(${JSON.stringify(join(dir
 if (${JSON.stringify(mode)} === "callback") { writeFileSync(${JSON.stringify(join(dir, ".git", "pid"))}, String(process.pid)); console.log("event"); await new Promise((resolve) => setTimeout(resolve, 30_000)); }
 if (${JSON.stringify(mode)} === "oversize") console.log(JSON.stringify({type:"unknown",payload:"x".repeat(100_000)}));
 if (${JSON.stringify(mode)} === "secret") { console.log(JSON.stringify({type:"unknown",value:"secret-value"})); console.log(JSON.stringify({type:"tool_call",item:{name:"secret-value"}})); }
+if (${JSON.stringify(mode)} === "nomessage") {
+  console.log(JSON.stringify({type:"user",message:{text:"nomessage-echo-marker"}}));
+  console.log(JSON.stringify({type:"thinking",delta:"nomessage-thinking-delta"}));
+  console.log(JSON.stringify({type:"tool_call",item:{name:"nomessage-tool"}}));
+  process.exit(0);
+}
+if (${JSON.stringify(mode)} === "nomessage-cancel") {
+  console.log(JSON.stringify({type:"user",message:{text:"nomessage-echo-marker"}}));
+  console.log(JSON.stringify({type:"thinking",delta:"nomessage-thinking-delta"}));
+  console.log(JSON.stringify({type:"tool_call",item:{name:"nomessage-tool"}}));
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+}
+if (${JSON.stringify(mode)} !== "nomessage" && ${JSON.stringify(mode)} !== "nomessage-cancel") {
 console.log(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(mode)} === "secret" ? "secret-value" : "session-1"}));
 console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify({summary:${JSON.stringify(mode)} === "secret" ? "secret-value" : "done",completed:true,filesChanged:[],checksRun:[],concerns:[]})}}));
+}
 `,
   );
   await chmod(command, 0o755);
@@ -135,6 +149,32 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
       }
     });
     expect(result.status).toBe("cancelled");
+  });
+
+  test("leaves finalOutput empty when cancelled before any assistant message", async () => {
+    const { dir, command } = await fixture("nomessage-cancel");
+    const adapter = new Adapter({ command });
+    const input = { ...request(dir), timeoutMs: 5000 };
+    let callId: string | undefined;
+    const result = await adapter.execute(input, async (event) => {
+      if (event.type === "session.started" && event.callId) callId = event.callId;
+      // Cancel only after the provider has streamed its non-message events.
+      if (event.type === "tool.started" && callId) void adapter.cancel(callId);
+    });
+    expect(result.status).toBe("cancelled");
+    expect(result.rawEventCount).toBe(3);
+    expect(result.finalOutput).toBe("");
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("nomessage-echo-marker");
+    expect(serialized).not.toContain("nomessage-thinking-delta");
+    expect(serialized).not.toContain("nomessage-tool");
+  });
+
+  test("leaves finalOutput empty when the provider exits with only non-message JSONL", async () => {
+    const { dir, command } = await fixture("nomessage");
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.status).toBe("succeeded");
+    expect(result.finalOutput).toBe("");
   });
 
   test("redacts configured values from results and raw events", async () => {
