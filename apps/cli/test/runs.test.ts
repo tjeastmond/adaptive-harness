@@ -92,7 +92,7 @@ describe("runs CLI", () => {
     const shownText = spawn(dir, "runs", "show", "run-1");
     expect(shownText.exitCode).toBe(0);
     expect(shownText.stdout.toString()).toContain(
-      "Updated: 2026-09-23T00:00:00.000Z\nBudget: 2 worker calls, 120 input / 30 output tokens (1 calls estimated)",
+      "Updated: 2026-09-23T00:00:00.000Z\nBudget: 2 worker calls, 120 input / 30 output tokens (1 call estimated)",
     );
 
     const firstPage = spawn(dir, "runs", "show", "run-1", "--events", "--limit", "1", "--json");

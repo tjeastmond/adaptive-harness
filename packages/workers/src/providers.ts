@@ -116,6 +116,7 @@ function usageFrom(value: unknown): Usage | undefined {
   return Object.keys(usage).length ? usage : undefined;
 }
 
+/** Rough token estimate for text, about four characters per token. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -167,7 +168,6 @@ abstract class CliWorker implements WorkerAdapter {
     let finalOutput = "";
     let report: WorkerReport | undefined;
     let usage: Usage = {};
-    let providerReportedUsage = false;
     let assistantTextLength = 0;
     let rawEventCount = 0;
     let eventLimitReached = false;
@@ -196,7 +196,6 @@ abstract class CliWorker implements WorkerAdapter {
       }
       const foundUsage = usageFrom(object?.usage ?? record(object?.total_token_usage) ?? record(object?.result)?.usage);
       if (foundUsage) {
-        providerReportedUsage = true;
         usage = { ...usage, ...foundUsage };
         await emitSafe({ type: "usage", usage, at });
       }
@@ -255,6 +254,7 @@ abstract class CliWorker implements WorkerAdapter {
         temp = await mkdtemp(join(tmpdir(), "harness-worker-"));
         await writeFile(join(temp, "report-schema.json"), JSON.stringify(reportSchema), { mode: 0o600 });
       }
+      const abortedBeforeStart = controller.signal.aborted;
       const result = await runProcess({
         command: [this.executable(), ...this.args(request, temp ? join(temp, "report-schema.json") : undefined)],
         cwd: request.workspace,
@@ -289,10 +289,15 @@ abstract class CliWorker implements WorkerAdapter {
             }))
         : [];
       if (report) report.filesChanged = filesChanged;
-      if (!providerReportedUsage)
+      // A provider that started but did not report usage (e.g. a cancelled call) is charged a lower-bound estimate.
+      const providerStarted = result.status !== "spawn-error" && !abortedBeforeStart;
+      const missingInput = usage.inputTokens === undefined;
+      const missingOutput = usage.outputTokens === undefined;
+      if (providerStarted && (missingInput || missingOutput))
         usage = {
-          inputTokens: estimateTokens(request.instructions),
-          outputTokens: Math.ceil(assistantTextLength / 4),
+          ...usage,
+          ...(missingInput ? { inputTokens: estimateTokens(request.instructions) } : {}),
+          ...(missingOutput ? { outputTokens: Math.ceil(assistantTextLength / 4) } : {}),
           estimated: true,
         };
       const status =

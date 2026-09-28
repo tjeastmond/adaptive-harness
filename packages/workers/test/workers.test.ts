@@ -51,6 +51,7 @@ if (${JSON.stringify(mode)} !== "nomessage" && ${JSON.stringify(mode)} !== "nome
 console.log(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(mode)} === "secret" ? "secret-value" : "session-1"}));
 console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify({summary:${JSON.stringify(mode)} === "secret" ? "secret-value" : "done",completed:true,filesChanged:[],checksRun:[],concerns:[]})}}));
 if (${JSON.stringify(mode)} === "usage") console.log(JSON.stringify({type:"usage",usage:{input_tokens:12,output_tokens:7}}));
+if (${JSON.stringify(mode)} === "partial-usage") console.log(JSON.stringify({type:"usage",usage:{cached_input_tokens:9}}));
 if (${JSON.stringify(mode)} === "message-cancel") {
   console.log(JSON.stringify({type:"assistant",message:{text:"more assistant text"}}));
   await new Promise((resolve) => setTimeout(resolve, 30_000));
@@ -188,6 +189,25 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     const { dir, command } = await fixture("usage");
     const result = await new Adapter({ command }).execute(request(dir), () => {});
     expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
+  });
+
+  test("estimates the token counts a partial usage report leaves out", async () => {
+    const { dir, command } = await fixture("partial-usage");
+    const input = request(dir);
+    const result = await new Adapter({ command }).execute(input, () => {});
+    expect(result.usage).toMatchObject({
+      cachedInputTokens: 9,
+      inputTokens: estimateTokens(input.instructions),
+      estimated: true,
+    });
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+  });
+
+  test("charges no usage when the provider cannot start", async () => {
+    const { dir } = await fixture("usage");
+    const result = await new Adapter({ command: join(dir, "missing-agent") }).execute(request(dir), () => {});
+    expect(result.status).toBe("failed");
+    expect(result.usage).toEqual({});
   });
 
   test("leaves finalOutput empty when cancelled before any assistant message", async () => {
