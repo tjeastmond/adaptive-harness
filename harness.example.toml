@@ -100,6 +100,12 @@ command = "bun"
 args = ["test"]
 timeoutMs = 300000
 
+[[verification.commands]]
+name = "check"
+command = "bun"
+args = ["run", "check"]
+timeoutMs = 120000
+
 [telemetry]
 console = "pretty"
 retainRawProviderEvents = true
