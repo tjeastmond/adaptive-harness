@@ -304,7 +304,7 @@ abstract class CliWorker implements WorkerAdapter {
         exitCode: result.exitCode,
         ...(sessionId ? { sessionId } : {}),
         ...(report ? { report } : {}),
-        finalOutput: finalOutput || redact(result.stdout, request.environment).slice(0, 8000),
+        finalOutput,
         usage,
         rawEventCount,
         ...(status === "failed"
