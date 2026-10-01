@@ -98,6 +98,7 @@ export const HarnessConfigSchema = z
         maxSteps: z.number().int().positive().default(8),
         maxRetriesPerTask: z.number().int().nonnegative().default(2),
         maxWorkerCalls: z.number().int().positive().default(5),
+        /** Counts uncached input tokens; cached input is excluded. */
         maxInputTokens: z.number().int().positive().default(1_000_000),
         maxCostUsd: z.number().positive().default(10),
         /** Active processing time; paused time awaiting a person is excluded. */
