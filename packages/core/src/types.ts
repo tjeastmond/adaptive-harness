@@ -298,6 +298,8 @@ export interface RunBudget {
   /** Number of worker calls whose usage was estimated; optional so stored runs stay readable. */
   estimatedWorkerCalls?: number;
   inputTokens: number;
+  /** Cached subset of `inputTokens`; optional so stored runs stay readable. */
+  cachedInputTokens?: number;
   outputTokens: number;
   estimatedCostUsd: number;
   elapsedMs: number;

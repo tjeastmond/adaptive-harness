@@ -119,11 +119,16 @@ export function selectInitialAgent(route: RouteDecision, config: { routing: Rout
   return config.routing.defaultAgent;
 }
 
+/** Input tokens the token limit counts: cached input is a subset of input, so only the uncached remainder is bounded. */
+export function uncachedInputTokens(usage: { inputTokens?: number; cachedInputTokens?: number }): number {
+  return Math.max(0, (usage.inputTokens ?? 0) - (usage.cachedInputTokens ?? 0));
+}
+
 /** Returns the first exhausted budget, if any. An exhausted budget forbids starting more work. */
 export function exhaustedBudget(run: Pick<HarnessRun, "currentStep" | "budget">, limits: BudgetLimits) {
   if (run.currentStep >= limits.maxSteps) return "step-limit";
   if (run.budget.workerCalls >= limits.maxWorkerCalls) return "worker-call-limit";
-  if (run.budget.inputTokens >= limits.maxInputTokens) return "token-limit";
+  if (uncachedInputTokens(run.budget) >= limits.maxInputTokens) return "token-limit";
   if (run.budget.estimatedCostUsd >= limits.maxCostUsd) return "cost-limit";
   if (run.budget.elapsedMs >= limits.maxElapsedMs) return "time-limit";
   return undefined;

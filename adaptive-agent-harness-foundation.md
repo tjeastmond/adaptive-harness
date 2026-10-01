@@ -667,6 +667,8 @@ export interface VerificationResult {
 export interface RunBudget {
   workerCalls: number;
   inputTokens: number;
+  /** Cached subset of `inputTokens`; optional so stored runs stay readable. */
+  cachedInputTokens?: number;
   outputTokens: number;
   estimatedCostUsd: number;
   elapsedMs: number;
@@ -858,6 +860,7 @@ export const HarnessConfigSchema = z
         maxSteps: z.number().int().positive().default(8),
         maxRetriesPerTask: z.number().int().nonnegative().default(2),
         maxWorkerCalls: z.number().int().positive().default(5),
+        /** Counts uncached input tokens; cached input is excluded. */
         maxInputTokens: z.number().int().positive().default(1_000_000),
         maxCostUsd: z.number().positive().default(10),
         maxElapsedMs: z.number().int().positive().default(3_600_000),
@@ -1189,7 +1192,7 @@ When verification failed, the policy never completes the run: a provider `done` 
 
 A failed worker call never completes the run either. When the latest call failed, was cancelled, or was interrupted, a `done` becomes `retry` for an implementation call while the retry limit and budgets allow another attempt, and `ask-user` otherwise or for a review call. The runtime records `worker-failed` in the reason codes of any action that follows a failed call. A failed review does not count as the attempt's completed review.
 
-`exhaustedBudget` checks steps, worker calls, input tokens, estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
+`exhaustedBudget` checks steps, worker calls, uncached input tokens (`inputTokens` minus `cachedInputTokens`, never below zero; cached input does not count toward `maxInputTokens`), estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
 
 A review happens at most once per implementation attempt unless new edits are made; a repeated review request asks the person instead.
 

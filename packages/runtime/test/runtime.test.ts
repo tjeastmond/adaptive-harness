@@ -541,6 +541,18 @@ test("streamed token and cost usage beyond the budget cancels the call and fails
   }
 });
 
+test("cached input does not count toward the token limit and is recorded in the budget", async () => {
+  // Both the streamed report and the final result carry the same mostly cached usage.
+  const usage = { inputTokens: 500, cachedInputTokens: 450, outputTokens: 5 };
+  const { runtime, create } = harness({ steps: [{ usage }], limits: { maxInputTokens: 100 } });
+  const run = await create();
+  await runtime.startRun(run.id);
+  const finished = await runtime.getRun(run.id);
+  expect(finished.failureReason).toBeUndefined();
+  expect(finished.status).not.toBe("failed");
+  expect(finished.budget).toMatchObject({ inputTokens: 500, cachedInputTokens: 450 });
+});
+
 test("estimated usage from a failed worker counts toward the run budget", async () => {
   const { runtime, create } = harness({
     steps: [{ fail: true, usage: { inputTokens: 120, outputTokens: 3, estimated: true } }],

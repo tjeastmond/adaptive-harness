@@ -10,6 +10,7 @@ export {
   normalizeRouteDecision,
   selectInitialAgent,
   selectNextAction,
+  uncachedInputTokens,
 } from "./policy.ts";
 export { completionQuestions, completionRequest, routeQuestions, routeRequest } from "./questions.ts";
 export type { DecisionContext, DecisionGateway, DecisionMode } from "./types.ts";

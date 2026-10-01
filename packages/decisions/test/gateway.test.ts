@@ -15,6 +15,7 @@ import {
   normalizeRouteDecision,
   selectInitialAgent,
   selectNextAction,
+  uncachedInputTokens,
 } from "../src/policy.ts";
 import { completionRequest, routeRequest } from "../src/questions.ts";
 
@@ -205,4 +206,27 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
     "ask-user",
   );
   expect(exhaustedBudget(spent, config.limits)).toBe("time-limit");
+});
+
+test("the token limit counts uncached input only", () => {
+  const limits = { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 100_000, maxCostUsd: 10, maxElapsedMs: 60_000 };
+  const spend = (budget: object) =>
+    ({
+      id: "run-1",
+      currentStep: 1,
+      budget: { workerCalls: 1, outputTokens: 10, estimatedCostUsd: 0, elapsedMs: 1, ...budget },
+    }) as HarnessRun;
+  expect(exhaustedBudget(spend({ inputTokens: 1_287_980, cachedInputTokens: 1_214_976 }), limits)).toBeUndefined();
+  expect(exhaustedBudget(spend({ inputTokens: 200_000, cachedInputTokens: 100_000 }), limits)).toBe("token-limit");
+  // Budgets stored before cached input was recorded behave as before.
+  expect(exhaustedBudget(spend({ inputTokens: 99_999 }), limits)).toBeUndefined();
+  expect(exhaustedBudget(spend({ inputTokens: 100_000 }), limits)).toBe("token-limit");
+});
+
+test("uncachedInputTokens clamps at zero and treats missing fields as zero", () => {
+  expect(uncachedInputTokens({ inputTokens: 100, cachedInputTokens: 30 })).toBe(70);
+  expect(uncachedInputTokens({ inputTokens: 100, cachedInputTokens: 150 })).toBe(0);
+  expect(uncachedInputTokens({ inputTokens: 100 })).toBe(100);
+  expect(uncachedInputTokens({ cachedInputTokens: 5 })).toBe(0);
+  expect(uncachedInputTokens({})).toBe(0);
 });

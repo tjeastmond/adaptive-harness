@@ -33,6 +33,7 @@ import {
   routeRequest,
   selectInitialAgent,
   selectNextAction,
+  uncachedInputTokens,
 } from "@adaptive-harness/decisions";
 import { RecordingContextAssembler, type RunCommit, type SqliteHarnessStore } from "@adaptive-harness/persistence";
 import type {
@@ -788,7 +789,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
   /** A streamed usage report beyond a budget stops the call instead of waiting for it to finish. */
   #checkStreamedUsage(drive: Drive, start: HarnessRun["budget"], usage: Usage): void {
     const limits = this.#settings.limits;
-    if (start.inputTokens + (usage.inputTokens ?? 0) > limits.maxInputTokens) {
+    if (uncachedInputTokens(start) + uncachedInputTokens(usage) > limits.maxInputTokens) {
       this.#requestStop(drive, "budget", "token-limit");
     } else if (start.estimatedCostUsd + (usage.estimatedCostUsd ?? 0) > limits.maxCostUsd) {
       this.#requestStop(drive, "budget", "cost-limit");
@@ -831,6 +832,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const runId = drive.run.id;
     const budget = drive.run.budget;
     budget.inputTokens += result.usage.inputTokens ?? 0;
+    if (result.usage.cachedInputTokens) {
+      budget.cachedInputTokens = (budget.cachedInputTokens ?? 0) + result.usage.cachedInputTokens;
+    }
     budget.outputTokens += result.usage.outputTokens ?? 0;
     budget.estimatedCostUsd += result.usage.estimatedCostUsd ?? 0;
     if (result.usage.estimated) budget.estimatedWorkerCalls = (budget.estimatedWorkerCalls ?? 0) + 1;
