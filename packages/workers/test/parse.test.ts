@@ -80,6 +80,42 @@ test("redact replaces repeated secrets but leaves values shorter than four chara
   ).toBe("[REDACTED], [REDACTED]; abc; xy");
 });
 
+describe("usageFrom Cursor cache tokens", () => {
+  test("folds cache reads into total input and reports them as cached", () => {
+    expect(usageFrom({ inputTokens: 85, outputTokens: 35, cacheReadTokens: 52049, cacheWriteTokens: 0 })).toEqual({
+      inputTokens: 52134,
+      cachedInputTokens: 52049,
+      outputTokens: 35,
+    });
+  });
+
+  test("counts cache writes in inputTokens only", () => {
+    expect(usageFrom({ inputTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 5 })).toEqual({
+      inputTokens: 115,
+      cachedInputTokens: 100,
+    });
+  });
+
+  test("ignores invalid cache values", () => {
+    expect(usageFrom({ inputTokens: 10, cacheReadTokens: -1, cacheWriteTokens: 1.5 })).toEqual({ inputTokens: 10 });
+    expect(usageFrom({ inputTokens: 10, cacheReadTokens: "7", cacheWriteTokens: "2" })).toEqual({ inputTokens: 10 });
+  });
+
+  test("does not invent inputTokens from cache fields", () => {
+    expect(usageFrom({ cacheReadTokens: 50, cacheWriteTokens: 3, outputTokens: 1 })).toEqual({
+      cachedInputTokens: 50,
+      outputTokens: 1,
+    });
+  });
+
+  test("keeps the unfolded input when the sum is not a safe integer", () => {
+    expect(usageFrom({ inputTokens: Number.MAX_SAFE_INTEGER, cacheReadTokens: 1 })).toEqual({
+      inputTokens: Number.MAX_SAFE_INTEGER,
+      cachedInputTokens: 1,
+    });
+  });
+});
+
 describe("stderrTail", () => {
   test("redacts secrets and strips ANSI, OSC, and control characters", () => {
     expect(
