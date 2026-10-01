@@ -36,6 +36,7 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 - Open or update one GitHub issue for work that persists beyond the current session or branch.
 - Reference the relevant foundation milestone and include paths, verification evidence, and commit SHAs when available.
 - Keep one logical item per issue; use issue comments for new evidence on an existing item.
+- Refer to the project owner as TJ in issues, pull requests, commits, and comments, not as "the repo owner" or "the user".
 
 ## Git and PR hygiene
 
