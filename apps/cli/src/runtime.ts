@@ -63,6 +63,7 @@ export async function openLocalRuntime(request: OpenRuntimeRequest, overrides: R
     env: request.env,
     requireSecrets: false,
   });
+  for (const warning of loaded.warnings) console.error(`Warning: ${warning}`);
   const { config } = loaded;
   const selected = decisionMode(config, request);
   if ("error" in selected) throw new Error(selected.error);

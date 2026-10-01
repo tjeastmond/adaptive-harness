@@ -85,7 +85,7 @@ The run database must not appear as an untracked file in the workspace repositor
 - Verified results.
 - Interventions: approvals the eval answered as the user.
 - Worker, review, and retry calls.
-- Worker tokens and cost.
+- Worker tokens.
 - Whether the route chose the expected task kind.
 
 ```bash

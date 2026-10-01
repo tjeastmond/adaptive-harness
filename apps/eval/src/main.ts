@@ -29,7 +29,6 @@ function table(summaries: ArmSummary[]): string {
     ["retries", (s) => String(s.retries)],
     ["worker input tokens", (s) => String(s.inputTokens)],
     ["worker output tokens", (s) => String(s.outputTokens)],
-    ["worker cost (USD)", (s) => s.estimatedCostUsd.toFixed(4)],
     ["task kind matches", (s) => `${s.taskKindMatches}/${s.tasks}`],
     ["duration (s)", (s) => (s.durationMs / 1000).toFixed(1)],
   ];

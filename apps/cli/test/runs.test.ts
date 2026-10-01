@@ -47,7 +47,7 @@ describe("runs CLI", () => {
         workerCalls: 2,
         inputTokens: 120,
         outputTokens: 30,
-        estimatedCostUsd: 0,
+
         elapsedMs: 0,
         estimatedWorkerCalls: 1,
       },

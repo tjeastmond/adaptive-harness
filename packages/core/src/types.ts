@@ -123,7 +123,6 @@ export interface Usage {
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
-  estimatedCostUsd?: number;
   /** Harness estimate because the provider reported no usage; a lower bound. */
   estimated?: boolean;
 }
@@ -301,7 +300,6 @@ export interface RunBudget {
   /** Cached subset of `inputTokens`; optional so stored runs stay readable. */
   cachedInputTokens?: number;
   outputTokens: number;
-  estimatedCostUsd: number;
   elapsedMs: number;
 }
 

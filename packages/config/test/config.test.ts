@@ -40,6 +40,18 @@ describe("loadHarnessConfig", () => {
     expect(yaml.config.providers.codex?.model).toBeNull();
   });
 
+  test("ignores a removed limits.maxCostUsd with a warning", async () => {
+    const { dir, path } = await fixture();
+    expect((await loadHarnessConfig({ cwd: dir })).warnings).toEqual([]);
+    await writeFile(path, yamlExample.replace("limits:\n", "limits:\n  maxCostUsd: 10\n"));
+    const loaded = await loadHarnessConfig({ cwd: dir });
+    expect(loaded.config.limits).not.toHaveProperty("maxCostUsd");
+    expect(loaded.config.limits.maxOutputTokens).toBe(200_000);
+    expect(loaded.warnings).toEqual([
+      "limits.maxCostUsd was removed and is ignored: budgets are token-based (maxInputTokens, maxOutputTokens).",
+    ]);
+  });
+
   test("discovers each default extension and rejects ambiguity", async () => {
     const { dir } = await fixture("harness.yml");
     expect((await loadHarnessConfig({ cwd: dir })).path).toBe(join(dir, "harness.yml"));

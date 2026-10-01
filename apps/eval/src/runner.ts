@@ -43,7 +43,6 @@ export interface TaskResult {
   decisions: number;
   inputTokens: number;
   outputTokens: number;
-  estimatedCostUsd: number;
   taskKind?: TaskKind;
   expectedTaskKind: TaskKind;
   agent?: string;
@@ -61,7 +60,6 @@ export interface ArmSummary {
   retries: number;
   inputTokens: number;
   outputTokens: number;
-  estimatedCostUsd: number;
   taskKindMatches: number;
   durationMs: number;
 }
@@ -243,7 +241,6 @@ async function runTask(
       decisions: (await store.listDecisions(run.id)).length,
       inputTokens: finished.budget.inputTokens,
       outputTokens: finished.budget.outputTokens,
-      estimatedCostUsd: finished.budget.estimatedCostUsd,
       ...(first ? { taskKind: first.kind } : {}),
       expectedTaskKind: task.expectedTaskKind,
       ...(first?.assignedAgent ? { agent: first.assignedAgent } : {}),
@@ -272,7 +269,6 @@ export function summarize(arm: EvalArm, results: TaskResult[]): ArmSummary {
     retries: total((result) => result.retries),
     inputTokens: total((result) => result.inputTokens),
     outputTokens: total((result) => result.outputTokens),
-    estimatedCostUsd: total((result) => result.estimatedCostUsd),
     taskKindMatches: mine.filter((result) => result.taskKind === result.expectedTaskKind).length,
     durationMs: total((result) => result.durationMs),
   };

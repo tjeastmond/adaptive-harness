@@ -76,7 +76,7 @@ maxSteps = 8
 maxRetriesPerTask = 2
 maxWorkerCalls = 5
 maxInputTokens = 1000000 # uncached input tokens; cached input is not counted
-maxCostUsd = 10.0
+maxOutputTokens = 200000 # output tokens reported by workers
 maxElapsedMs = 3600000
 workerTimeoutMs = 1200000
 
