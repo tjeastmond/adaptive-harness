@@ -58,8 +58,8 @@ export function usageFrom(value: unknown): Usage | undefined {
     ["inputTokens", "inputTokens"],
     ["outputTokens", "outputTokens"],
   ] as const) {
-    const number = object[source];
-    if (typeof number === "number" && Number.isSafeInteger(number) && number >= 0) usage[target] = number;
+    const number = count(object[source]);
+    if (number !== undefined) usage[target] = number;
   }
   // Cursor's inputTokens excludes cache reads, so fold them in to keep inputTokens a total.
   // Cache writes are counted as uncached input (conservative; unverified, every observed value was 0).
