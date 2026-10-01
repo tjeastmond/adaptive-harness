@@ -836,7 +836,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const cached = Math.min(result.usage.cachedInputTokens ?? 0, result.usage.inputTokens ?? 0);
     if (cached) budget.cachedInputTokens = (budget.cachedInputTokens ?? 0) + cached;
     budget.outputTokens += result.usage.outputTokens ?? 0;
-    if (result.usage.estimated) budget.estimatedWorkerCalls = (budget.estimatedWorkerCalls ?? 0) + 1;
+    if (result.usage.unreported) budget.unreportedWorkerCalls = (budget.unreportedWorkerCalls ?? 0) + 1;
     await this.#appendOnce({
       id: `${result.id}:result`,
       runId,

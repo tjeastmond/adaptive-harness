@@ -2,13 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerRequest, WorkerStreamEvent } from "@adaptive-harness/core";
-import {
-  BoundedJsonlParser,
-  CodexWorkerAdapter,
-  CursorWorkerAdapter,
-  estimateTokens,
-  runProcess,
-} from "../src/index.ts";
+import { BoundedJsonlParser, CodexWorkerAdapter, CursorWorkerAdapter, runProcess } from "../src/index.ts";
 
 const dirs: string[] = [];
 async function fixture(mode: string, version = "fake-agent 1.0") {
@@ -163,44 +157,32 @@ describe.each([CodexWorkerAdapter, CursorWorkerAdapter])("%p", (Adapter) => {
     expect(result.status).toBe("cancelled");
   });
 
-  test("estimates usage from instructions and streamed assistant text after cancellation", async () => {
+  test("flags unreported usage without guessing counts after cancellation", async () => {
     const { dir, command } = await fixture("message-cancel");
     const adapter = new Adapter({ command });
     const input = { ...request(dir), timeoutMs: 5000 };
     let callId: string | undefined;
-    let streamedText = "";
     const result = await adapter.execute(input, (event) => {
       if (event.type === "session.started" && event.callId) callId = event.callId;
       if (event.type === "message" && event.role === "assistant") {
-        streamedText += event.text;
         if (event.text === "more assistant text" && callId) void adapter.cancel(callId);
       }
     });
     expect(result.status).toBe("cancelled");
-    expect(result.usage).toEqual({
-      inputTokens: estimateTokens(input.instructions),
-      outputTokens: estimateTokens(streamedText),
-      estimated: true,
-    });
-    expect(result.usage.outputTokens).toBeGreaterThan(0);
+    expect(result.usage).toEqual({ unreported: true });
   });
 
-  test("keeps provider-reported usage without an estimated flag", async () => {
+  test("keeps provider-reported usage without an unreported flag", async () => {
     const { dir, command } = await fixture("usage");
     const result = await new Adapter({ command }).execute(request(dir), () => {});
     expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 7 });
+    expect(result.usage.unreported).toBeUndefined();
   });
 
-  test("estimates the token counts a partial usage report leaves out", async () => {
+  test("keeps a partial usage report as reported and flags it unreported", async () => {
     const { dir, command } = await fixture("partial-usage");
-    const input = request(dir);
-    const result = await new Adapter({ command }).execute(input, () => {});
-    expect(result.usage).toMatchObject({
-      cachedInputTokens: 9,
-      inputTokens: estimateTokens(input.instructions),
-      estimated: true,
-    });
-    expect(result.usage.outputTokens).toBeGreaterThan(0);
+    const result = await new Adapter({ command }).execute(request(dir), () => {});
+    expect(result.usage).toEqual({ cachedInputTokens: 9, unreported: true });
   });
 
   test("charges no usage when the provider cannot start", async () => {

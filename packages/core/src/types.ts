@@ -123,8 +123,8 @@ export interface Usage {
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
-  /** Harness estimate because the provider reported no usage; a lower bound. */
-  estimated?: boolean;
+  /** The provider started but did not report input and output token counts; any counts present are only what it reported. */
+  unreported?: boolean;
 }
 
 export interface FileChange {
@@ -294,7 +294,9 @@ export interface VerificationResult {
 
 export interface RunBudget {
   workerCalls: number;
-  /** Number of worker calls whose usage was estimated; optional so stored runs stay readable. */
+  /** Worker calls whose usage the provider did not fully report; optional so stored runs stay readable. */
+  unreportedWorkerCalls?: number;
+  /** Legacy: calls charged an estimate before estimates were removed; present only on older stored runs. */
   estimatedWorkerCalls?: number;
   inputTokens: number;
   /** Cached subset of `inputTokens`; optional so stored runs stay readable. */

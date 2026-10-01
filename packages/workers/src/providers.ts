@@ -53,11 +53,6 @@ function isReadOnly(request: WorkerRequest): boolean {
   return request.task.access.mode === "read";
 }
 
-/** Rough token estimate for text, about four characters per token. */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
 abstract class CliWorker implements WorkerAdapter {
   abstract readonly kind: "codex-cli" | "cursor-cli";
   private readonly active = new Map<string, AbortController>();
@@ -105,7 +100,6 @@ abstract class CliWorker implements WorkerAdapter {
     let finalOutput = "";
     let report: WorkerReport | undefined;
     let usage: Usage = {};
-    let assistantTextLength = 0;
     let rawEventCount = 0;
     let eventLimitReached = false;
     const emitSafe = async (event: WorkerStreamEvent) => {
@@ -142,7 +136,6 @@ abstract class CliWorker implements WorkerAdapter {
         (type === "item.completed" || type === "assistant" || type === "result" || payload?.type === "agent_message")
       ) {
         finalOutput = redact(text, request.environment);
-        assistantTextLength += finalOutput.length;
         await emitSafe({ type: "message", role: "assistant", text: finalOutput, at });
         try {
           report = reportFrom(JSON.parse(redact(text, request.environment))) ?? report;
@@ -226,17 +219,12 @@ abstract class CliWorker implements WorkerAdapter {
             }))
         : [];
       if (report) report.filesChanged = filesChanged;
-      // A provider that started but did not report usage (e.g. a cancelled call) is charged a lower-bound estimate.
+      // A provider that started but did not report usage (e.g. a cancelled call) is flagged, not guessed:
+      // the harness does not estimate token counts.
       const providerStarted = result.status !== "spawn-error" && !abortedBeforeStart;
       const missingInput = usage.inputTokens === undefined;
       const missingOutput = usage.outputTokens === undefined;
-      if (providerStarted && (missingInput || missingOutput))
-        usage = {
-          ...usage,
-          ...(missingInput ? { inputTokens: estimateTokens(request.instructions) } : {}),
-          ...(missingOutput ? { outputTokens: Math.ceil(assistantTextLength / 4) } : {}),
-          estimated: true,
-        };
+      if (providerStarted && (missingInput || missingOutput)) usage = { ...usage, unreported: true };
       const status =
         result.status === "timed-out"
           ? "timed-out"

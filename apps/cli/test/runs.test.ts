@@ -48,7 +48,7 @@ describe("runs CLI", () => {
         inputTokens: 120,
         outputTokens: 30,
         elapsedMs: 0,
-        estimatedWorkerCalls: 1,
+        unreportedWorkerCalls: 1,
       },
       createdAt: "2026-09-23T00:00:00.000Z",
       updatedAt: "2026-09-23T00:00:00.000Z",
@@ -91,7 +91,7 @@ describe("runs CLI", () => {
     const shownText = spawn(dir, "runs", "show", "run-1");
     expect(shownText.exitCode).toBe(0);
     expect(shownText.stdout.toString()).toContain(
-      "Updated: 2026-09-23T00:00:00.000Z\nBudget: 2 worker calls, 120 input / 30 output tokens (1 call estimated)",
+      "Updated: 2026-09-23T00:00:00.000Z\nBudget: 2 worker calls, 120 input / 30 output tokens (1 call with unreported usage)",
     );
 
     const firstPage = spawn(dir, "runs", "show", "run-1", "--events", "--limit", "1", "--json");
@@ -101,6 +101,28 @@ describe("runs CLI", () => {
     });
     const secondPage = spawn(dir, "runs", "show", "run-1", "--events", "--after", "1", "--json");
     expect(JSON.parse(secondPage.stdout.toString())).toMatchObject({ events: [{ sequence: 2 }] });
+  });
+
+  test("still shows the legacy estimated-call count on older stored runs", async () => {
+    const { dir, configPath, databasePath } = await fixture();
+    await mkdir(join(dir, ".harness"));
+    const store = new SqliteHarnessStore(databasePath);
+    await store.createRun({
+      id: "run-legacy",
+      status: "created",
+      objective: { text: "Old history", acceptanceCriteria: [] },
+      workspace: dir,
+      configPath,
+      configHash: "fixture-hash",
+      currentStep: 0,
+      budget: { workerCalls: 2, inputTokens: 120, outputTokens: 30, elapsedMs: 0, estimatedWorkerCalls: 2 },
+      createdAt: "2026-09-23T00:00:00.000Z",
+      updatedAt: "2026-09-23T00:00:00.000Z",
+    });
+    store.close();
+    const shown = spawn(dir, "runs", "show", "run-legacy");
+    expect(shown.exitCode).toBe(0);
+    expect(shown.stdout.toString()).toContain("output tokens (2 calls estimated)");
   });
 
   test("prints a removed-limit config warning once on stderr", async () => {
