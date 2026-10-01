@@ -47,7 +47,6 @@ describe("runs CLI", () => {
         workerCalls: 2,
         inputTokens: 120,
         outputTokens: 30,
-        estimatedCostUsd: 0,
         elapsedMs: 0,
         estimatedWorkerCalls: 1,
       },
@@ -102,6 +101,18 @@ describe("runs CLI", () => {
     });
     const secondPage = spawn(dir, "runs", "show", "run-1", "--events", "--after", "1", "--json");
     expect(JSON.parse(secondPage.stdout.toString())).toMatchObject({ events: [{ sequence: 2 }] });
+  });
+
+  test("prints a removed-limit config warning once on stderr", async () => {
+    const { dir, configPath, databasePath } = await fixture();
+    await mkdir(join(dir, ".harness"));
+    new SqliteHarnessStore(databasePath).close();
+    await writeFile(configPath, example.replace("  maxInputTokens:", "  maxCostUsd: 10\n  maxInputTokens:"));
+    const result = spawn(dir, "runs", "list");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("No runs found.");
+    const warning = "Warning: limits.maxCostUsd was removed and is ignored";
+    expect(result.stderr.toString().split(warning)).toHaveLength(2);
   });
 
   test("does not create a database when none exists", async () => {

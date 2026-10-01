@@ -78,6 +78,7 @@ export async function runCli(args: string[], overrides: Partial<CommandContext> 
 
   try {
     const loaded = await loadHarnessConfig(configPath === undefined ? {} : { configPath });
+    for (const warning of loaded.warnings) console.error(`Warning: ${warning}`);
     console.log(`Config valid: ${loaded.path}`);
     return 0;
   } catch (error) {

@@ -150,7 +150,7 @@ function containsSecret(value: unknown, secret: string): boolean {
 /** Load, validate, normalize and fingerprint a version 1 harness configuration. */
 export async function loadHarnessConfig(
   options: LoadHarnessConfigOptions = {},
-): Promise<{ path: string; config: HarnessConfig; hash: string }> {
+): Promise<{ path: string; config: HarnessConfig; hash: string; warnings: string[] }> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const path = await discover(cwd, options.configPath);
   let source: string;
@@ -163,6 +163,15 @@ export async function loadHarnessConfig(
   const env = options.env ?? process.env;
   const names = secretNames(raw);
   const expanded = interpolate(raw, env, names);
+  const warnings: string[] = [];
+  const limits =
+    typeof expanded === "object" && expanded !== null ? (expanded as { limits?: unknown }).limits : undefined;
+  if (typeof limits === "object" && limits !== null && !Array.isArray(limits) && "maxCostUsd" in limits) {
+    delete (limits as Record<string, unknown>).maxCostUsd;
+    warnings.push(
+      "limits.maxCostUsd was removed and is ignored: budgets are token-based (maxInputTokens, maxOutputTokens).",
+    );
+  }
   const parsed = HarnessConfigSchema.safeParse(expanded);
   if (!parsed.success) {
     const sensitive = [...names].map((name) => env[name]).filter((value): value is string => Boolean(value));
@@ -193,5 +202,5 @@ export async function loadHarnessConfig(
     }
   }
   const hash = createHash("sha256").update(canonicalJson(config)).digest("hex");
-  return { path, config, hash };
+  return { path, config, hash, warnings };
 }

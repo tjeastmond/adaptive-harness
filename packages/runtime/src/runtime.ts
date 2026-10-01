@@ -255,7 +255,7 @@ export class LocalHarnessRuntime implements HarnessRuntime {
       configPath: this.#config.path,
       configHash: this.#config.hash,
       currentStep: 0,
-      budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, elapsedMs: 0 },
+      budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, elapsedMs: 0 },
       createdAt: at,
       updatedAt: at,
       ...(input.dryRun ? { dryRun: true } : {}),
@@ -791,8 +791,8 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const limits = this.#settings.limits;
     if (uncachedInputTokens(start) + uncachedInputTokens(usage) > limits.maxInputTokens) {
       this.#requestStop(drive, "budget", "token-limit");
-    } else if (start.estimatedCostUsd + (usage.estimatedCostUsd ?? 0) > limits.maxCostUsd) {
-      this.#requestStop(drive, "budget", "cost-limit");
+    } else if (start.outputTokens + (usage.outputTokens ?? 0) > limits.maxOutputTokens) {
+      this.#requestStop(drive, "budget", "output-token-limit");
     }
   }
 
@@ -836,7 +836,6 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const cached = Math.min(result.usage.cachedInputTokens ?? 0, result.usage.inputTokens ?? 0);
     if (cached) budget.cachedInputTokens = (budget.cachedInputTokens ?? 0) + cached;
     budget.outputTokens += result.usage.outputTokens ?? 0;
-    budget.estimatedCostUsd += result.usage.estimatedCostUsd ?? 0;
     if (result.usage.estimated) budget.estimatedWorkerCalls = (budget.estimatedWorkerCalls ?? 0) + 1;
     await this.#appendOnce({
       id: `${result.id}:result`,

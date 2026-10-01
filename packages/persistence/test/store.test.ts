@@ -26,7 +26,7 @@ function run(id = "run-1", status: HarnessRun["status"] = "created"): HarnessRun
     configPath: "/tmp/harness.yaml",
     configHash: "hash",
     currentStep: 0,
-    budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, elapsedMs: 0 },
+    budget: { workerCalls: 0, inputTokens: 0, outputTokens: 0, elapsedMs: 0 },
     createdAt: now,
     updatedAt: now,
   };

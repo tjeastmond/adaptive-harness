@@ -92,6 +92,7 @@ export async function runRunsCommand(args: string[]): Promise<number> {
     const loaded = await loadHarnessConfig(
       configPath === undefined ? { requireSecrets: false } : { configPath, requireSecrets: false },
     );
+    for (const warning of loaded.warnings) console.error(`Warning: ${warning}`);
     reader = SqliteRunReader.open(loaded.config.storage.database);
     if (command === "list") {
       const runs = await reader.listRuns(limit === undefined ? {} : { limit });

@@ -150,12 +150,12 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
   const run = {
     id: "run-1",
     currentStep: 8,
-    budget: { workerCalls: 1, inputTokens: 100, outputTokens: 10, estimatedCostUsd: 0, elapsedMs: 1 },
+    budget: { workerCalls: 1, inputTokens: 100, outputTokens: 10, elapsedMs: 1 },
   } as HarnessRun;
   const verification = { ok: true, commands: [], gitDiffStat: "", filesChanged: [] } satisfies VerificationResult;
   const config = {
     routing,
-    limits: { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 1_000, maxCostUsd: 10, maxElapsedMs: 60_000 },
+    limits: { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 1_000, maxOutputTokens: 1_000, maxElapsedMs: 60_000 },
   };
   const beforeReview = { reviewCompletedForAttempt: false, editsSinceReview: false };
   expect(selectNextAction(completion, verification, run, config, beforeReview)).toBe("fail");
@@ -209,18 +209,42 @@ test("typed policy keeps routing and completion authority in TypeScript", async 
 });
 
 test("the token limit counts uncached input only", () => {
-  const limits = { maxSteps: 8, maxWorkerCalls: 5, maxInputTokens: 100_000, maxCostUsd: 10, maxElapsedMs: 60_000 };
+  const limits = {
+    maxSteps: 8,
+    maxWorkerCalls: 5,
+    maxInputTokens: 100_000,
+    maxOutputTokens: 5_000,
+    maxElapsedMs: 60_000,
+  };
   const spend = (budget: object) =>
     ({
       id: "run-1",
       currentStep: 1,
-      budget: { workerCalls: 1, outputTokens: 10, estimatedCostUsd: 0, elapsedMs: 1, ...budget },
+      budget: { workerCalls: 1, outputTokens: 10, elapsedMs: 1, ...budget },
     }) as HarnessRun;
   expect(exhaustedBudget(spend({ inputTokens: 1_287_980, cachedInputTokens: 1_214_976 }), limits)).toBeUndefined();
   expect(exhaustedBudget(spend({ inputTokens: 200_000, cachedInputTokens: 100_000 }), limits)).toBe("token-limit");
   // Budgets stored before cached input was recorded behave as before.
   expect(exhaustedBudget(spend({ inputTokens: 99_999 }), limits)).toBeUndefined();
   expect(exhaustedBudget(spend({ inputTokens: 100_000 }), limits)).toBe("token-limit");
+});
+
+test("the output token limit counts reported output tokens", () => {
+  const limits = {
+    maxSteps: 8,
+    maxWorkerCalls: 5,
+    maxInputTokens: 100_000,
+    maxOutputTokens: 5_000,
+    maxElapsedMs: 60_000,
+  };
+  const spend = (outputTokens: number) =>
+    ({
+      id: "run-1",
+      currentStep: 1,
+      budget: { workerCalls: 1, inputTokens: 10, outputTokens, elapsedMs: 1 },
+    }) as HarnessRun;
+  expect(exhaustedBudget(spend(4_999), limits)).toBeUndefined();
+  expect(exhaustedBudget(spend(5_000), limits)).toBe("output-token-limit");
 });
 
 test("uncachedInputTokens clamps at zero and treats missing fields as zero", () => {

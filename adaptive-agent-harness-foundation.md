@@ -25,7 +25,7 @@ Milestone 1 must be useful for real coding work while also producing the evidenc
 
 The long-term product experience is:
 
-> Give the harness an objective, watch specialized agents collaborate, understand why the system made each decision, intervene when necessary, and retain a complete record of cost, context, changes, and verification.
+> Give the harness an objective, watch specialized agents collaborate, understand why the system made each decision, intervene when necessary, and retain a complete record of token use, context, changes, and verification.
 
 ## 2. Core design principles
 
@@ -154,7 +154,7 @@ If more than one default config file exists, fail and ask for `--config`. Silent
 - Reject unknown keys in version 1.
 - Secrets are referenced by environment variable name, never stored directly.
 - Paths are resolved relative to the config file.
-- CLI flags may override run-specific values such as workspace, dry-run, JSON output, and maximum cost.
+- CLI flags may override run-specific values such as workspace, dry-run, and JSON output.
 - Write the normalized configuration and a SHA-256 digest into the run record.
 - Support only `${ENV_NAME}` interpolation and reject missing variables.
 
@@ -237,7 +237,7 @@ limits:
   maxRetriesPerTask: 2
   maxWorkerCalls: 5
   maxInputTokens: 1000000
-  maxCostUsd: 10
+  maxOutputTokens: 200000
   maxElapsedMs: 3600000
   workerTimeoutMs: 1200000
 
@@ -329,7 +329,7 @@ maxSteps = 8
 maxRetriesPerTask = 2
 maxWorkerCalls = 5
 maxInputTokens = 1000000
-maxCostUsd = 10.0
+maxOutputTokens = 200000
 maxElapsedMs = 3600000
 workerTimeoutMs = 1200000
 
@@ -497,7 +497,6 @@ export interface Usage {
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
-  estimatedCostUsd?: number;
 }
 
 export interface FileChange {
@@ -670,7 +669,6 @@ export interface RunBudget {
   /** Cached subset of `inputTokens`; optional so stored runs stay readable. */
   cachedInputTokens?: number;
   outputTokens: number;
-  estimatedCostUsd: number;
   elapsedMs: number;
 }
 
@@ -862,7 +860,8 @@ export const HarnessConfigSchema = z
         maxWorkerCalls: z.number().int().positive().default(5),
         /** Counts uncached input tokens; cached input is excluded. */
         maxInputTokens: z.number().int().positive().default(1_000_000),
-        maxCostUsd: z.number().positive().default(10),
+        /** Counts output tokens reported by workers. */
+        maxOutputTokens: z.number().int().positive().default(200_000),
         maxElapsedMs: z.number().int().positive().default(3_600_000),
         workerTimeoutMs: z.number().int().positive().default(1_200_000),
       })
@@ -1065,7 +1064,7 @@ VERIFICATION
 <command names, exit codes, durations, bounded stderr/stdout tails>
 
 RUN LIMITS
-<attempts, remaining worker calls, remaining token and cost budget>
+<attempts, remaining worker calls, remaining token budget>
 ```
 
 The assembly also retains the ordered chunk IDs, visibility level, and rendered
@@ -1192,7 +1191,9 @@ When verification failed, the policy never completes the run: a provider `done` 
 
 A failed worker call never completes the run either. When the latest call failed, was cancelled, or was interrupted, a `done` becomes `retry` for an implementation call while the retry limit and budgets allow another attempt, and `ask-user` otherwise or for a review call. The runtime records `worker-failed` in the reason codes of any action that follows a failed call. A failed review does not count as the attempt's completed review.
 
-`exhaustedBudget` checks steps, worker calls, uncached input tokens (`inputTokens` minus `cachedInputTokens`, never below zero; cached input does not count toward `maxInputTokens`), estimated cost, and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the token or cost budget cancels the call in flight.
+`exhaustedBudget` checks steps, worker calls, uncached input tokens (`inputTokens` minus `cachedInputTokens`, never below zero; cached input does not count toward `maxInputTokens`), output tokens (`maxOutputTokens`), and active elapsed time. The runtime applies further guards when it acts on the selected action: a retry beyond `maxRetriesPerTask` fails with `retry-limit`, `verify` and `research` (not yet supported as runtime actions) become `ask-user`, and streamed worker usage beyond the input or output token budget cancels the call in flight.
+
+Budgets are token-based because the worker CLIs run on subscriptions and report tokens, never cost; the harness records and limits no dollar figure. A config that still sets `limits.maxCostUsd` loads with a warning and the value is ignored.
 
 A review happens at most once per implementation attempt unless new edits are made; a repeated review request asks the person instead.
 
@@ -1351,13 +1352,13 @@ Exit criteria:
 Exit criteria:
 
 - End-to-end tests cover every terminal state.
-- Step, retry, worker-call, token, time, and cost limits always stop the run.
+- Step, retry, worker-call, token, and time limits always stop the run.
 
 ### Milestone 1.7: Benchmark and evaluation suite
 
 1. Define 10 to 20 small coding tasks across fixture repositories.
 2. Run each task in baseline and Jev-routed modes.
-3. Record tests passed, human intervention, calls, tokens, time, and estimated cost.
+3. Record tests passed, human intervention, calls, tokens, and time.
 4. Review incorrect routing and threshold behavior manually.
 
 Exit criteria:
@@ -1422,7 +1423,6 @@ Track these per run:
 - Worker calls by provider
 - Jev calls
 - Input, cached input, and output tokens when available
-- Estimated provider cost
 - Wall-clock duration
 - Number of retries
 - Number of review cycles
@@ -1537,7 +1537,7 @@ Milestone 1 is the usable local CLI and permanent runtime foundation. Later mile
 - Agent tree and task graph
 - Visible handoffs and messages
 - Jev decisions, probabilities, confidence, and policy outcomes
-- Token, latency, and cost views
+- Token and latency views
 - Diff and verification views
 - Pause, redirect, retry, approve, resume, and cancel controls
 - YAML/TOML configuration editor with validation

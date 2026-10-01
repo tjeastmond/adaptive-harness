@@ -525,10 +525,10 @@ test("step and worker-call limits stop further work", async () => {
   }
 });
 
-test("streamed token and cost usage beyond the budget cancels the call and fails the run", async () => {
+test("streamed token usage beyond the budget cancels the call and fails the run", async () => {
   for (const [usage, limits, reason] of [
     [{ inputTokens: 500 }, { maxInputTokens: 100 }, "token-limit"],
-    [{ estimatedCostUsd: 2 }, { maxCostUsd: 1 }, "cost-limit"],
+    [{ outputTokens: 500 }, { maxOutputTokens: 100 }, "output-token-limit"],
   ] as const) {
     const { runtime, store, create } = harness({ steps: [{ usage, block: true }], limits });
     const run = await create();

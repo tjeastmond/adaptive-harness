@@ -27,7 +27,7 @@ export interface BudgetLimits {
   maxSteps: number;
   maxWorkerCalls: number;
   maxInputTokens: number;
-  maxCostUsd: number;
+  maxOutputTokens: number;
   maxElapsedMs: number;
 }
 
@@ -129,7 +129,7 @@ export function exhaustedBudget(run: Pick<HarnessRun, "currentStep" | "budget">,
   if (run.currentStep >= limits.maxSteps) return "step-limit";
   if (run.budget.workerCalls >= limits.maxWorkerCalls) return "worker-call-limit";
   if (uncachedInputTokens(run.budget) >= limits.maxInputTokens) return "token-limit";
-  if (run.budget.estimatedCostUsd >= limits.maxCostUsd) return "cost-limit";
+  if (run.budget.outputTokens >= limits.maxOutputTokens) return "output-token-limit";
   if (run.budget.elapsedMs >= limits.maxElapsedMs) return "time-limit";
   return undefined;
 }
