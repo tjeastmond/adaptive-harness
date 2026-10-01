@@ -568,16 +568,17 @@ test("cached input is capped at each call's own input before it offsets other ca
   expect(failed.budget).toMatchObject({ inputTokens: 200, cachedInputTokens: 100 });
 });
 
-test("estimated usage from a failed worker counts toward the run budget", async () => {
+test("unreported usage from a failed worker counts only what was reported", async () => {
   const { runtime, create } = harness({
-    steps: [{ fail: true, usage: { inputTokens: 120, outputTokens: 3, estimated: true } }],
+    steps: [{ fail: true, usage: { inputTokens: 120, unreported: true } }],
     limits: { maxInputTokens: 100 },
   });
   const run = await create();
   await runtime.startRun(run.id);
   const failed = await runtime.getRun(run.id);
   expect(failed.status).toBe("failed");
-  expect(failed.budget).toMatchObject({ inputTokens: 120, outputTokens: 3, estimatedWorkerCalls: 1 });
+  expect(failed.budget).toMatchObject({ inputTokens: 120, outputTokens: 0, unreportedWorkerCalls: 1 });
+  expect(failed.budget.estimatedWorkerCalls).toBeUndefined();
   expect(failed.failureReason).toBe("token-limit");
 });
 

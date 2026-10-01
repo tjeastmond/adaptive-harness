@@ -114,7 +114,7 @@ export async function runRunsCommand(args: string[]): Promise<number> {
       else {
         const budget = run.budget;
         console.log(
-          `Run: ${run.id}\nStatus: ${run.status}${run.dryRun ? " (dry run)" : ""}\nObjective: ${run.objective.text}\nWorkspace: ${run.workspace}\nUpdated: ${run.updatedAt}\nBudget: ${budget.workerCalls} worker calls, ${budget.inputTokens} input / ${budget.outputTokens} output tokens${budget.estimatedWorkerCalls ? ` (${budget.estimatedWorkerCalls} ${budget.estimatedWorkerCalls === 1 ? "call" : "calls"} estimated)` : ""}`,
+          `Run: ${run.id}\nStatus: ${run.status}${run.dryRun ? " (dry run)" : ""}\nObjective: ${run.objective.text}\nWorkspace: ${run.workspace}\nUpdated: ${run.updatedAt}\nBudget: ${budget.workerCalls} worker calls, ${budget.inputTokens} input / ${budget.outputTokens} output tokens${budget.unreportedWorkerCalls ? ` (${budget.unreportedWorkerCalls} ${budget.unreportedWorkerCalls === 1 ? "call" : "calls"} with unreported usage)` : ""}${budget.estimatedWorkerCalls ? ` (${budget.estimatedWorkerCalls} ${budget.estimatedWorkerCalls === 1 ? "call" : "calls"} estimated)` : ""}`,
         );
         if (runEvents)
           for (const event of runEvents) console.log(`#${event.sequence}\t${event.occurredAt}\t${event.payload.type}`);

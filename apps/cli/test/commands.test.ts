@@ -121,7 +121,7 @@ function fakeJev(completions: Array<"done" | "ask-user">): DecisionProvider {
 class FakeWorker implements WorkerAdapter {
   readonly kind = "codex-cli" as const;
   readonly requests: WorkerRequest[] = [];
-  constructor(private readonly estimated = false) {}
+  constructor(private readonly unreported = false) {}
   async preflight() {
     return { ok: true, version: "fake 1.0", details: [] };
   }
@@ -144,7 +144,7 @@ class FakeWorker implements WorkerAdapter {
       durationMs: 1,
       exitCode: 0,
       finalOutput: "done",
-      usage: { inputTokens: 10, outputTokens: 5, ...(this.estimated ? { estimated: true } : {}) },
+      usage: { inputTokens: 10, outputTokens: 5, ...(this.unreported ? { unreported: true } : {}) },
       rawEventCount: 1,
     } satisfies WorkerResult;
   }
@@ -196,14 +196,14 @@ test("run streams events and reports a completed run", async () => {
   expect(types.at(-1)).toBe("run.completed");
 });
 
-test("run marks estimated usage in the worker completion line", async () => {
+test("run marks unreported usage in the worker completion line", async () => {
   const { configPath } = fixture();
   const result = await cli(["run", "Add a feature file", "--config", configPath], {
     jev: fakeJev(["done"]),
     workers: { fake: new FakeWorker(true) },
   });
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain("worker succeeded (usage estimated)");
+  expect(result.stdout).toContain("worker succeeded (usage not reported)");
 });
 
 test("run --dry-run reports the plan without calling a worker", async () => {
