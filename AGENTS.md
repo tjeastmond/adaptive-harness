@@ -39,6 +39,7 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 
 ## Git and PR hygiene
 
+- An agent may merge its pull request without asking when all of these hold: `bun run validate` passes on the final commit, every Dr. Nit finding is resolved, no identified duplicated-code or security concern remains unresolved, and the agent has checked each of the task's stated requirements (its issue or definition of done) against the PR and found it met. Otherwise, ask the user before merging and say which condition is unmet.
 - When merging a pull request, use `gh pr merge --delete-branch` and verify the remote branch is gone. If a linked worktree has the branch checked out, `gh` cannot delete the local branch and may leave the remote one; delete it with `git push origin --delete <branch>`.
 - After merging, remove the source branch's linked worktree, if any, with `git worktree remove <path>` (never `--force`), but only when all of these hold: `git status` in it is clean, it has no commits beyond what was merged, and no active agent still uses it. Otherwise keep it and tell the user which worktree was kept and why.
 - Then prune stale remote-tracking refs and delete the local source branch, unless its worktree was kept.
