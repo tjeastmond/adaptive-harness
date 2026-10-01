@@ -104,9 +104,13 @@ describe("runs CLI", () => {
   });
 
   test("prints a removed-limit config warning once on stderr", async () => {
-    const { dir, configPath } = await fixture();
+    const { dir, configPath, databasePath } = await fixture();
+    await mkdir(join(dir, ".harness"));
+    new SqliteHarnessStore(databasePath).close();
     await writeFile(configPath, example.replace("  maxInputTokens:", "  maxCostUsd: 10\n  maxInputTokens:"));
     const result = spawn(dir, "runs", "list");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("No runs found.");
     const warning = "Warning: limits.maxCostUsd was removed and is ignored";
     expect(result.stderr.toString().split(warning)).toHaveLength(2);
   });
