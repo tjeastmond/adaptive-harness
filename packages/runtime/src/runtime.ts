@@ -832,9 +832,9 @@ export class LocalHarnessRuntime implements HarnessRuntime {
     const runId = drive.run.id;
     const budget = drive.run.budget;
     budget.inputTokens += result.usage.inputTokens ?? 0;
-    if (result.usage.cachedInputTokens) {
-      budget.cachedInputTokens = (budget.cachedInputTokens ?? 0) + result.usage.cachedInputTokens;
-    }
+    // Cached input is a subset of the same call's input, so a malformed report cannot offset other calls.
+    const cached = Math.min(result.usage.cachedInputTokens ?? 0, result.usage.inputTokens ?? 0);
+    if (cached) budget.cachedInputTokens = (budget.cachedInputTokens ?? 0) + cached;
     budget.outputTokens += result.usage.outputTokens ?? 0;
     budget.estimatedCostUsd += result.usage.estimatedCostUsd ?? 0;
     if (result.usage.estimated) budget.estimatedWorkerCalls = (budget.estimatedWorkerCalls ?? 0) + 1;
