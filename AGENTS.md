@@ -40,7 +40,8 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 ## Git and PR hygiene
 
 - When merging a pull request, delete its source branch. Use `gh pr merge --delete-branch` and verify the remote branch is gone.
-- After merging, prune stale remote-tracking refs and delete the local source branch. If it is checked out in a clean linked worktree, detach that worktree at its current commit before deleting the branch; preserve the worktree files.
+- After merging, prune stale remote-tracking refs and delete the local source branch. If `gh` cannot delete the local branch because a worktree has it checked out, it may also leave the remote branch; delete that with `git push origin --delete <branch>`.
+- Remove a linked worktree once its work is merged and `git status` in it is clean: `git worktree remove <path>` (never `--force`), then delete its branch. Keep a worktree only if it has uncommitted or untracked work, holds unmerged work, or an active agent may still use it; tell the user which worktree was kept and why.
 - Never delete a branch with uncommitted changes or while an active agent still needs that branch.
 - Do not attribute work to any AI agent or coding tool. Commits, PR titles and bodies, issue and review comments, and code must not include `Co-Authored-By` trailers, "Generated with" footers, or mentions of Claude, Codex, Cursor, or any other agent or model as an author.
 
