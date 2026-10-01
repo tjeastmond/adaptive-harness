@@ -63,3 +63,16 @@ These rules apply to Claude agent sessions (Claude Code in the terminal or the C
 - Stop only processes you started: use the task-stop tool with the task ID of a background command, or let a foreground command finish or time out. If one cannot be stopped that way, report it to the user instead of searching for it.
 - Limit machine use to the command line for this project: Git, `gh`, `bun`, and reading and editing files in the repository and your scratch directory. Do not use desktop, browser, AppleScript, or other app-control tools, and do not change other applications or system state.
 - Avoid commands that wait for interactive input, such as a bare `cat` with no file.
+
+### Task workflow
+
+Claude sessions follow this sequence for each task:
+
+1. **Plan.** The main session picks a GitHub issue, scopes it, and writes a self-contained spec.
+2. **Implement.** For substantial changes, a Sonnet subagent implements the spec in an isolated worktree, adds focused tests, runs `bun run validate`, and commits without pushing. The main session makes trivial changes itself.
+3. **Verify.** The main session reads the diff, mutation-checks each new test (temporarily remove the logic, confirm the test fails, restore it; never while validate is running), and reruns `bun run validate` itself.
+4. **Open the PR.** Push the branch and open the PR with `Fixes #N`.
+5. **Review.** Run the Dr. Nit review with Codex directly, not through a wrapper agent, from a checkout of the PR's source branch (its worktree, if it has one) so that `git diff main...HEAD` holds the PR's changes: `node ~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs task "<prompt>"`. The prompt tells Codex to read and follow `~/.codex/skills/dr-nit/SKILL.md`, scopes it to `git diff main...HEAD`, and tells it not to run `gh` or typecheck, which fail in its sandbox. Never pass `--write`; the reviewer stays read-only.
+6. **Post.** Post Codex's findings verbatim as a new PR comment under a `## Dr. Nit review` heading, and show the user the exact command and Codex's final output.
+7. **Fix.** Send substantive fixes to the Sonnet subagent; the main session may make trivial fixes itself. Rerun `bun run validate`, push the fixes, confirm the PR head is the validated commit, then post a PR comment describing each fix and its verification. After substantive fixes, repeat steps 5 and 6 from the same branch, posting each repeat review as a new comment.
+8. **Merge and clean up** as described in Git and PR hygiene.
