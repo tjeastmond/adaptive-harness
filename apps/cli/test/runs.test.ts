@@ -103,6 +103,14 @@ describe("runs CLI", () => {
     expect(JSON.parse(secondPage.stdout.toString())).toMatchObject({ events: [{ sequence: 2 }] });
   });
 
+  test("prints a removed-limit config warning once on stderr", async () => {
+    const { dir, configPath } = await fixture();
+    await writeFile(configPath, example.replace("  maxInputTokens:", "  maxCostUsd: 10\n  maxInputTokens:"));
+    const result = spawn(dir, "runs", "list");
+    const warning = "Warning: limits.maxCostUsd was removed and is ignored";
+    expect(result.stderr.toString().split(warning)).toHaveLength(2);
+  });
+
   test("does not create a database when none exists", async () => {
     const { dir, databasePath } = await fixture();
     const result = spawn(dir, "runs", "list");

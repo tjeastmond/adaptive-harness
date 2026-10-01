@@ -288,6 +288,16 @@ test("a missing Jev key is rejected unless the decision mode is deterministic", 
   expect(invalid.stderr).toContain("must be jev or deterministic");
 });
 
+test("agents list prints a removed-limit config warning once on stderr", async () => {
+  const { configPath } = fixture();
+  const source = await Bun.file(configPath).text();
+  writeFileSync(configPath, source.replace("limits: {}", "limits:\n  maxCostUsd: 10"));
+  const result = await cli(["agents", "list", "--config", configPath, "--json"]);
+  expect(result.code).toBe(0);
+  const warning = "Warning: limits.maxCostUsd was removed and is ignored";
+  expect(result.stderr.split(warning)).toHaveLength(2);
+});
+
 test("agents list and providers doctor report configuration and preflight", async () => {
   const { configPath } = fixture();
   const agents = await cli(["agents", "list", "--config", configPath, "--json"]);

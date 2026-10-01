@@ -319,11 +319,12 @@ export async function agentsCommand(args: string[], context: CommandContext): Pr
     return usage("Usage: harness agents list [--config path] [--json]");
   try {
     const configPath = options.values.get("config");
-    const { config } = await loadHarnessConfig({
+    const { config, warnings } = await loadHarnessConfig({
       ...(configPath === undefined ? {} : { configPath }),
       env: context.env,
       requireSecrets: false,
     });
+    for (const warning of warnings) console.error(`Warning: ${warning}`);
     const roles = (name: string) =>
       (["defaultAgent", "complexAgent", "reviewerAgent"] as const).filter((role) => config.routing[role] === name);
     const agents = Object.entries(config.agents).map(([name, agent]) => ({
