@@ -1521,6 +1521,139 @@ Milestone 1 is the usable local CLI and permanent runtime foundation. Later mile
 - Rich terminal event stream
 - Agent and provider health commands
 
+#### Milestone 2 contracts
+
+Status: proposed in #86. TJ reviews these contracts before any scheduler code merges. The TypeScript below is illustrative; the implementing issue lands the real types in `packages/core`. Every contract is additive. A run stored before Milestone 2 must still load, replay, and resume, and the existing single-implementation-plus-review flow must behave identically, with the same tests passing unchanged.
+
+Two existing terms must not be confused. `DecisionHandoffError` and the `decision-handoff` reason mean a decision escalated to a person. A _handoff_ in this section means passing work from one agent task to another. The `handoff` value of `DecisionPhase` is reserved for the second meaning; it is defined today but no runtime path uses it.
+
+##### Task graph
+
+A run owns a directed acyclic graph of `HarnessTask`s.
+
+```ts
+interface HarnessTask {
+  // ...existing fields...
+  /** Tasks that must be satisfied before this one may start. Fixed at creation. */
+  dependsOn?: TaskId[];
+}
+```
+
+- `parentTaskId` stays provenance: which task caused this one to exist. It is not a dependency. A review task today has `parentTaskId` set to its implementation task; Milestone 2 also gives it `dependsOn: [implementationTaskId]`. A task absent from `dependsOn` runs independently of its parent.
+- Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` dependency is _satisfied_. Task statuses are today's; this issue adds none.
+- **Deferred to #87.** Retry linkage (`retryOf`), the orchestrator's final disposition of a task (`resolution`), the exact meaning of a _satisfied_ or _dead_ dependency, a `cancelled` status and dependency-failure propagation, how legacy runs derive these from stored events, and how task outcomes aggregate into the run's terminal status. These interact (retries, reviews, approvals, failed calls, and budgets), so #87 defines them together with a pure scheduler and tests for every task kind and outcome, rather than as prose here. Until #87 lands, the single implementation-then-review flow is the only graph a run builds, with the review depending on its implementation, and runs behave as they do today.
+- Edges are validated when a task is created. Every dependency must be an existing task in the same run, and an edge that would create a cycle is rejected before anything is persisted or any event is emitted. Edges are immutable afterwards.
+- **Who may add tasks:** only the orchestrator policy in `HarnessRuntime`, and only after a `delegation` decision from `DecisionGateway` and a policy check against the run limits. A worker, the CLI, or a provider can never create a task. A worker may only request help through the existing `WorkerReport.requestedHelp`, which the orchestrator treats as input to a delegation decision.
+- A `delegation` decision is bounded. Jev chooses among typed options: a task kind, an agent from the configured registry, an access mode, and which existing tasks the new task depends on. It never supplies commands, paths to execute, or free-form instructions that bypass `ContextAssembler`. In deterministic decision mode there is no delegation beyond today's implementation-then-review flow, and the bypass is recorded with `decision.bypassed` as it is today.
+- Each task keeps its declared `access` (`read` or `write`, optional `resources`). `task.access.mode` remains the only source of write permission for a worker.
+
+##### Scheduling
+
+The scheduler is a pure function of the task graph, the running set, and the policy limits. It returns the tasks that may start now, in a deterministic order (`createdAt`, then `id`). It performs no I/O and makes no decisions.
+
+- **Read tasks** may run in parallel, up to `limits.maxConcurrentReadTasks`. The default is `1`, so behavior is unchanged until #89 raises it.
+- **Write tasks** run one at a time per run, each in its own worktree, until reconciliation (#91) exists. Overlapping `access.resources` are therefore not yet arbitrated, but the field is recorded for when more than one writer is allowed.
+- A read task may run beside a running write task only against a stable view: the run's base commit or a completed task's collected worktree. It never reads a worktree that a running writer is mutating.
+- `limits.maxDelegationDepth` (default `2`) caps how deep a delegation chain may go. A task the run creates at start has depth 0; a task created by a `delegation` decision made while handling a task has that task's depth plus one. A delegation that would exceed the limit is refused by policy before anything is persisted, as with `maxTasks`.
+- **Limits are per run.** `maxTasks`, `maxConcurrentReadTasks`, and `maxDelegationDepth` are read from `limits` in the harness config. The config path for a per-agent override is reserved: `agents.<name>.limits.<same key>`, which will be additive, may only lower the run's value, and is not implemented in Milestone 2. The config schema must stay open to it, so adding it does not change the meaning of the per-run keys.
+- `limits.maxTasks` caps the tasks a run may create. Its default preserves current behavior. `maxSteps`, `maxWorkerCalls`, and the token and time limits keep their current meaning.
+- **Pause** keeps today's semantics: it aborts every running worker call, as a pause does for the single call now, starts no new task, and moves the run to `paused`. A call interrupted this way is recorded the way an interrupted call is today, and resume applies the existing resume rules to each task. Cancel semantics for a graph are part of #87.
+- **Checkpoint.** `RunCheckpoint` version 1 holds a single in-flight task. It becomes version 2, which records one in-flight entry per running task. The existing rule holds: a worker call recorded in flight is never started again on resume. A version 1 checkpoint loads as a graph of the tasks it already references.
+
+##### Workspace lifecycle
+
+Each chain of editing attempts (a task and its retries; their linkage is defined in #87) owns one Git worktree, managed through the `git` CLI as a configured capability, not a Git library.
+
+```text
+created -> baselined -> active -> collected -> reconciled | discarded -> removed
+```
+
+1. **Create.** When a chain's first editing task starts, `git worktree add` on a branch `harness/<runId>/task-<N>`, where `<N>` is that first task's number, from the run's base commit, under a harness-owned directory inside the existing gitignored `.harness` directory. Canonical task IDs have the form `<runId>:task:<N>` and contain `:`, which Git refs forbid, so only the branch and directory component is derived: `task-<N>`, where `<N>` is the task's per-run number. Run IDs are `run-` followed by a UUID or a hash and are Git-safe, and `<N>` is unique within a run, so the derived name cannot collide. An ID not in that form is encoded by replacing every character outside `[A-Za-z0-9._-]` with `-` and appending `-` and the first 8 hex characters of the SHA-256 of the canonical ID. Events and storage always carry the canonical task ID, and `workspace.created` records the branch actually used.
+2. **Baseline.** Capture `GitState` in the worktree before each worker call. The existing clean-tree requirement applies when the worktree is created. A retry runs in the same worktree and keeps the predecessor's edits, committed or not, as retries do today; the baseline taken before the retry records them as pre-existing changes, so only the retry's own changes are attributed to it.
+3. **Active.** `WorkerRequest.workspace` is the worktree path, for every attempt in the chain. Verification runs in that worktree.
+4. **Collect.** After each attempt, record the evidence as today (`GitEvidence`, diff, files changed) plus the branch head. Collection changes nothing in the base workspace.
+5. **Reconcile or discard.** The chain's final accepted state is what is reconciled. Integrating the chain's branch into the base branch is the job of #91 and requires a person's approval. Discarding requires approval when the branch has uncommitted changes or commits that are not integrated.
+6. **Remove.** Only after reconcile or discard. Remove the worktree without `--force`. A worktree that is not clean, or that holds unintegrated commits, is kept and reported unless a person approved discarding exactly that state; after an approved discard the harness cleans the worktree and removes it, still without `--force`. A run that ends with unreconciled worktrees leaves them in place and lists them.
+
+- Read tasks get no worktree of their own. They run read-only against their stable view, enforced by `task.access.mode` as today.
+- The existing safety rule applies to every workspace: stop if a repository changes outside the active worker process.
+- Until #88 enables isolation, the single implementation task keeps running directly in the run's workspace, so existing behavior is unchanged.
+
+##### Handoffs
+
+A handoff passes the state a downstream task needs; it never passes a transcript.
+
+```ts
+interface AgentHandoff {
+  id: string;
+  runId: RunId;
+  fromTaskId: TaskId;
+  toTaskId: TaskId;
+  /** The state chunks the receiving task may see, each with the most it may see of it. Content stays in the StateStore. */
+  chunks: Array<{ chunkId: StateChunkId; visibility: ContextVisibility }>;
+  reasonCodes: string[];
+  decisionId: DecisionId;
+  createdAt: string;
+}
+```
+
+- Only the orchestrator creates a handoff, after a `handoff` decision from `DecisionGateway`. The decision selects which candidate chunks pass on and at what visibility. It does not write content.
+- The receiving task builds its context through `ContextAssembler`. The handoff's chunk IDs become `candidateChunkIds`, and `ContextAssemblyRequest` gains an optional `visibilityCeiling: Record<StateChunkId, ContextVisibility>` built from the handoff. The assembler may choose any visibility up to the ceiling for a chunk, never above it, and never includes a chunk outside the candidates. Visibility is ordered `hidden < short < long < full`. The assembly record, selected chunks with their final visibility, and rendered content hash are stored as for any other context, so the ceiling is auditable.
+- A handoff is also stored as a `handoff` state chunk, an additive `StateChunkType`. Its content is the record above, and it stays bounded in size.
+- A handoff requires `toTaskId` to depend on `fromTaskId`, so a handoff can never create a cycle or let a task start before its source finished.
+
+##### Protocol events
+
+New event types are additive within envelope `version: 1`. No existing payload changes shape. Every new payload carries a top-level `runId`, because the store checks it against the envelope. Consumers must ignore event types they do not recognize; the CLI and eval runner already select events by `type`. A breaking change to an existing payload is the only reason to bump the envelope version.
+
+| Event                 | Payload                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| `task.created`        | `runId`, `task`                                                                                 |
+| `task.status-changed` | `runId`, `taskId`, `from`, `to`, `reason?`                                                      |
+| `handoff.created`     | `runId`, `handoff`                                                                              |
+| `workspace.created`   | `runId`, `taskId`, `path`, `branch`, `baseCommit` (once per task and its retries, by the first) |
+| `workspace.collected` | `runId`, `taskId`, `headCommit`, `filesChanged`                                                 |
+| `workspace.removed`   | `runId`, `taskId`, `reason`                                                                     |
+
+`workspace.reconciled` is reserved for #91 and defined there.
+
+- Replay folds `task.created` and `task.status-changed` into the graph. #87 adds any further task events. For a run stored before Milestone 2, which has no task events, the graph is derived from the `tasks` table: each review task depends on the implementation task named by its `parentTaskId`.
+- Persistence stores edges in a `task_dependencies(run_id, task_id, depends_on_task_id)` table added by migration 4, with foreign keys to `tasks(id, run_id)`. `HarnessTask.dependsOn` is the read model. The existing `events` table constraint `version = 1` is unchanged.
+- The `run.status-changed` event is unchanged. How the run's single coarse status derives from several active tasks, including any new state-machine transitions, is part of #87.
+
+##### Budgets with concurrent calls
+
+Budgets stay run-level. The run budget is the only authority, and per-task usage is derived from `worker_calls`.
+
+- A worker-call slot is reserved when a call starts. The existing check (`exhaustedBudget`) and the increment of `workerCalls` happen inside one serialized commit, so concurrent starts cannot exceed `maxWorkerCalls`.
+- Tokens are charged when a call completes, as today. The streamed-usage guard compares the charged total plus the streamed usage of every in-flight call against the limit, and a breach stops all in-flight calls and starts none.
+- Because providers report usage at the end of a call, the token limits may overshoot by at most the usage of the calls in flight when the limit is crossed. Concurrency therefore raises the worst-case overshoot, which is why `maxConcurrentReadTasks` defaults to `1`.
+- `elapsedMs` stays wall-clock active time for the run, so parallel tasks do not multiply it. Each call's timeout stays `min(workerTimeoutMs, maxElapsedMs - elapsedMs)`.
+- Calls whose provider reported no usage still count in `unreportedWorkerCalls`. The harness does not estimate their usage.
+
+##### Out of scope for Milestone 2
+
+- Automatic branch merging. Integration always goes through merge review and a person's approval.
+- Simultaneous edits to the same workspace, and more than one running write task per run.
+- Tasks created by workers, the CLI, or providers.
+- Tasks that span runs, and tiered or dynamic tool loading.
+
+##### Follow-up issue order
+
+1. #87 Task graph and scheduler, including retry linkage, task resolution, dependency satisfaction and failure, run-status aggregation, and legacy replay (depends on this section).
+2. #88 Worktree per editing task (depends on #87).
+3. #89 Parallel read-only tasks (depends on #87; needs #88 to review an isolated writer).
+4. #90 Handoffs (depends on #87).
+5. #91 Reconciliation and merge review (depends on #88).
+6. #92 Event stream (after #87, #88, and #90 define their events).
+7. #93 Health checks (independent; may run in parallel with any of the above).
+
+##### Decisions from TJ
+
+- Worktrees live at `.harness/worktrees/<runId>/task-<N>` inside the repository, in the existing gitignored `.harness` directory, using the derived `task-<N>` component and encoding rule from the Workspace lifecycle. `harness doctor` already inspects `.harness` paths.
+- Delegation chains have a depth limit, `limits.maxDelegationDepth`, defaulting to `2`.
+- `maxTasks` and `maxConcurrentReadTasks` are per run for now, and the per-agent config path is reserved (see Scheduling).
+
 ### Milestone 3: Local daemon and control plane
 
 - Bun HTTP service wrapping `HarnessRuntime`
