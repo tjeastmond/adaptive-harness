@@ -1536,8 +1536,10 @@ interface HarnessTask {
   // ...existing fields...
   /** Tasks that must be `completed` before this one may start. Fixed at creation. */
   dependsOn?: TaskId[];
-  /** The failed task this task retries. Absent on a first attempt and on tasks stored before Milestone 2. */
+  /** The previous attempt this task retries, whether that attempt failed or completed. Absent on a first attempt. */
   retryOf?: TaskId;
+  /** The orchestrator's final disposition of this attempt. Absent while undecided, including while a person's approval is pending. */
+  resolution?: "accepted" | "superseded" | "abandoned";
   status: "pending" | "running" | "completed" | "failed" | "paused" | "cancelled";
   /** Set when status is `cancelled` or `failed`, e.g. "dependency-failed", "run-cancelled", "budget". */
   statusReason?: string;
@@ -1545,9 +1547,12 @@ interface HarnessTask {
 ```
 
 - `parentTaskId` stays provenance: which task caused this one to exist. It is not a dependency. A review task today has `parentTaskId` set to its implementation task; Milestone 2 also gives it `dependsOn: [implementationTaskId]`. A task absent from `dependsOn` runs independently of its parent.
-- Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` task is `completed`. `completed`, `failed`, and `cancelled` are terminal.
-- A task is `failed` as soon as one worker call on it does not succeed, as today. A retry creates a new task with the next ID and an incremented `attempt`, as today, and the new task carries `retryOf: <failed TaskId>`. The `retryOf` links form a retry chain. A dependency on any task in a chain is satisfied only by the completed head of that chain, and the new task inherits the failed task's `dependsOn`. For runs stored before Milestone 2, which have no `retryOf`, successive implementation tasks of a run are read as one retry chain.
-- A dependency is _dead_ when the head of its chain is `failed` or `cancelled` and the orchestrator's policy has chosen not to retry it (the `policy.action` is not `retry`, or the retry limit is exhausted). Only then does every transitive dependent become `cancelled` with `statusReason: "dependency-failed"`. While a retry is still possible, dependents stay `pending`. No dependent starts before its dependencies complete. Re-planning is a new task created through the delegation path below.
+- Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` dependency is _satisfied_ (defined below). `completed`, `failed`, and `cancelled` are terminal.
+- A task is `failed` as soon as one worker call on it does not succeed, as today. A successful call marks the task `completed` before verification, as today, so `completed` does not yet mean the work is accepted.
+- **Retry chains.** A retry creates a new task with the next ID and an incremented `attempt`, as today, whether the previous attempt failed or completed (a completed attempt can be retried after failed verification or because more work is useful). The new task carries `retryOf: <previous TaskId>` and inherits that task's `dependsOn`. The `retryOf` links form a chain whose _head_ is its newest task. A dependency on any task in a chain refers to the chain's head.
+- **Resolution.** After verification and the completion decision, the orchestrator sets the head's `resolution` from the resulting `policy.action`: `retry` marks it `superseded`; `fail` marks it `abandoned`; `ask-user` leaves it unset until a person answers, and the answer then resolves it as one of the existing outcomes (an approved `retry` is `superseded`, a chosen `fail` is `abandoned`, anything else is `accepted`); every other action marks it `accepted`. A superseded predecessor keeps its own `completed` or `failed` status.
+- **Satisfied and dead dependencies.** A dependency is _satisfied_ when its chain's head is `completed` and `accepted`. It is _dead_ when the head is `failed` or `cancelled` and `abandoned`. A dependency whose head is unresolved is neither: its dependents stay `pending`, which keeps them waiting through a pending approval and through a retry. Only a dead dependency makes every transitive dependent `cancelled` with `statusReason: "dependency-failed"`. Re-planning is a new task created through the delegation path below.
+- For runs stored before Milestone 2, which have no `retryOf` or `resolution`, successive implementation tasks of a run are read as one retry chain: every task but the newest is `superseded`; the newest is `accepted` if it is `completed` and `abandoned` if it is `failed`.
 - Edges are validated when a task is created. Every dependency must be an existing task in the same run, and an edge that would create a cycle is rejected before anything is persisted or any event is emitted. Edges are immutable afterwards.
 - **Who may add tasks:** only the orchestrator policy in `HarnessRuntime`, and only after a `delegation` decision from `DecisionGateway` and a policy check against the run limits. A worker, the CLI, or a provider can never create a task. A worker may only request help through the existing `WorkerReport.requestedHelp`, which the orchestrator treats as input to a delegation decision.
 - A `delegation` decision is bounded. Jev chooses among typed options: a task kind, an agent from the configured registry, an access mode, and which existing tasks the new task depends on. It never supplies commands, paths to execute, or free-form instructions that bypass `ContextAssembler`. In deterministic decision mode there is no delegation beyond today's implementation-then-review flow, and the bypass is recorded with `decision.bypassed` as it is today.
@@ -1566,17 +1571,17 @@ The scheduler is a pure function of the task graph, the running set, and the pol
 
 ##### Workspace lifecycle
 
-Each editing task owns one Git worktree, managed through the `git` CLI as a configured capability, not a Git library.
+Each chain of editing attempts (the retry chain above) owns one Git worktree, managed through the `git` CLI as a configured capability, not a Git library.
 
 ```text
 created -> baselined -> active -> collected -> reconciled | discarded -> removed
 ```
 
-1. **Create.** `git worktree add` on a task branch `harness/<runId>/task-<N>`, from the run's base commit, under a harness-owned directory inside the existing gitignored `.harness` directory. Canonical task IDs have the form `<runId>:task:<N>` and contain `:`, which Git refs forbid, so only the branch and directory component is derived: `task-<N>`, where `<N>` is the task's per-run number. Run IDs are `run-` followed by a UUID or a hash and are Git-safe, and `<N>` is unique within a run, so the derived name cannot collide. An ID not in that form is encoded by replacing every character outside `[A-Za-z0-9._-]` with `-` and appending `-` and the first 8 hex characters of the SHA-256 of the canonical ID. Events and storage always carry the canonical task ID, and `workspace.created` records the branch actually used.
-2. **Baseline.** Capture `GitState` in the new worktree before the worker call. The existing clean-tree requirement applies per worktree.
-3. **Active.** `WorkerRequest.workspace` is the worktree path. Verification for the task runs in that worktree.
-4. **Collect.** Record the evidence as today (`GitEvidence`, diff, files changed) plus the task branch head. Collection changes nothing in the base workspace.
-5. **Reconcile or discard.** Integrating a task branch into the base branch is the job of #91 and requires a person's approval. Discarding requires approval when the branch has uncommitted changes or commits that are not integrated.
+1. **Create.** When a chain's first editing task starts, `git worktree add` on a branch `harness/<runId>/task-<N>`, where `<N>` is that first task's number, from the run's base commit, under a harness-owned directory inside the existing gitignored `.harness` directory. Canonical task IDs have the form `<runId>:task:<N>` and contain `:`, which Git refs forbid, so only the branch and directory component is derived: `task-<N>`, where `<N>` is the task's per-run number. Run IDs are `run-` followed by a UUID or a hash and are Git-safe, and `<N>` is unique within a run, so the derived name cannot collide. An ID not in that form is encoded by replacing every character outside `[A-Za-z0-9._-]` with `-` and appending `-` and the first 8 hex characters of the SHA-256 of the canonical ID. Events and storage always carry the canonical task ID, and `workspace.created` records the branch actually used.
+2. **Baseline.** Capture `GitState` in the worktree before each worker call. The existing clean-tree requirement applies when the worktree is created. A retry runs in the same worktree and keeps the predecessor's edits, committed or not, as retries do today; the baseline taken before the retry records them as pre-existing changes, so only the retry's own changes are attributed to it.
+3. **Active.** `WorkerRequest.workspace` is the worktree path, for every attempt in the chain. Verification runs in that worktree.
+4. **Collect.** After each attempt, record the evidence as today (`GitEvidence`, diff, files changed) plus the branch head. Collection changes nothing in the base workspace.
+5. **Reconcile or discard.** The chain's final accepted state is what is reconciled. Integrating the chain's branch into the base branch is the job of #91 and requires a person's approval. Discarding requires approval when the branch has uncommitted changes or commits that are not integrated.
 6. **Remove.** Only after reconcile or discard. Remove the worktree without `--force`. A worktree that is not clean, or that holds unintegrated commits, is kept and reported. A run that ends with unreconciled worktrees leaves them in place and lists them.
 
 - Read tasks get no worktree of their own. They run read-only against their stable view, enforced by `task.access.mode` as today.
@@ -1610,18 +1615,19 @@ interface AgentHandoff {
 
 New event types are additive within envelope `version: 1`. No existing payload changes shape. Every new payload carries a top-level `runId`, because the store checks it against the envelope. Consumers must ignore event types they do not recognize; the CLI and eval runner already select events by `type`. A breaking change to an existing payload is the only reason to bump the envelope version.
 
-| Event                 | Payload                                           |
-| --------------------- | ------------------------------------------------- |
-| `task.created`        | `runId`, `task`                                   |
-| `task.status-changed` | `runId`, `taskId`, `from`, `to`, `reason?`        |
-| `handoff.created`     | `runId`, `handoff`                                |
-| `workspace.created`   | `runId`, `taskId`, `path`, `branch`, `baseCommit` |
-| `workspace.collected` | `runId`, `taskId`, `headCommit`, `filesChanged`   |
-| `workspace.removed`   | `runId`, `taskId`, `reason`                       |
+| Event                 | Payload                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| `task.created`        | `runId`, `task`                                                                             |
+| `task.status-changed` | `runId`, `taskId`, `from`, `to`, `reason?`                                                  |
+| `task.resolved`       | `runId`, `taskId`, `resolution`                                                             |
+| `handoff.created`     | `runId`, `handoff`                                                                          |
+| `workspace.created`   | `runId`, `taskId`, `path`, `branch`, `baseCommit` (once per retry chain, by its first task) |
+| `workspace.collected` | `runId`, `taskId`, `headCommit`, `filesChanged`                                             |
+| `workspace.removed`   | `runId`, `taskId`, `reason`                                                                 |
 
 `workspace.reconciled` is reserved for #91 and defined there.
 
-- Replay folds `task.created` and `task.status-changed` into the graph. For a run stored before Milestone 2, which has no task events, the graph is derived from the `tasks` table: each review task depends on the implementation task named by its `parentTaskId`.
+- Replay folds `task.created`, `task.status-changed`, and `task.resolved` into the graph. For a run stored before Milestone 2, which has no task events, the graph is derived from the `tasks` table: each review task depends on the implementation task named by its `parentTaskId`.
 - Persistence stores edges in a `task_dependencies(run_id, task_id, depends_on_task_id)` table added by migration 4, with foreign keys to `tasks(id, run_id)`. `HarnessTask.dependsOn` is the read model. The existing `events` table constraint `version = 1` is unchanged.
 - The existing `run.status-changed` event and run state machine are unchanged. With several tasks, the run status is `running` while any task runs, `reviewing` only while the sole active tasks are reviews, and `verifying` for the existing verification phase.
 
