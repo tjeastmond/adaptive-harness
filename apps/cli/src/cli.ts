@@ -6,6 +6,7 @@ import {
   approvalsCommand,
   type CommandContext,
   controlCommand,
+  doctorCommand,
   providersCommand,
   runCommand,
   watchCommand,
@@ -24,6 +25,7 @@ const USAGE = `Usage:
   harness cancel <run-id> [--config path] [--json]
   harness approvals answer <request-id> <answer> [--config path] [--decision-mode jev|deterministic] [--json]
   harness agents list [--config path] [--json]
+  harness doctor [--config path] [--json]
   harness providers doctor [--config path] [--json]
   harness --help`;
 
@@ -45,6 +47,7 @@ export async function runCli(args: string[], overrides: Partial<CommandContext> 
     return controlCommand(command, rest, context);
   if (command === "approvals") return approvalsCommand(rest, context);
   if (command === "agents") return agentsCommand(rest, context);
+  if (command === "doctor") return doctorCommand(rest, context);
   if (command === "providers") return providersCommand(rest, context);
 
   if (args[0] !== "config" || args[1] !== "validate") {
