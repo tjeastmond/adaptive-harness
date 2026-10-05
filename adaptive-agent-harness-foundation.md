@@ -1536,6 +1536,8 @@ interface HarnessTask {
   // ...existing fields...
   /** Tasks that must be `completed` before this one may start. Fixed at creation. */
   dependsOn?: TaskId[];
+  /** The failed task this task retries. Absent on a first attempt and on tasks stored before Milestone 2. */
+  retryOf?: TaskId;
   status: "pending" | "running" | "completed" | "failed" | "paused" | "cancelled";
   /** Set when status is `cancelled` or `failed`, e.g. "dependency-failed", "run-cancelled", "budget". */
   statusReason?: string;
@@ -1544,8 +1546,8 @@ interface HarnessTask {
 
 - `parentTaskId` stays provenance: which task caused this one to exist. It is not a dependency. A review task today has `parentTaskId` set to its implementation task; Milestone 2 also gives it `dependsOn: [implementationTaskId]`. A task absent from `dependsOn` runs independently of its parent.
 - Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` task is `completed`. `completed`, `failed`, and `cancelled` are terminal.
-- A task is `failed` only when its retry limit is exhausted. A retry stays inside the same task, as today: `attempt` increments and the task is not replaced.
-- When a dependency ends `failed` or `cancelled`, every transitive dependent becomes `cancelled` with `statusReason: "dependency-failed"`. No dependent starts. Re-planning is a new task created through the delegation path below.
+- A task is `failed` as soon as one worker call on it does not succeed, as today. A retry creates a new task with the next ID and an incremented `attempt`, as today, and the new task carries `retryOf: <failed TaskId>`. The `retryOf` links form a retry chain. A dependency on any task in a chain is satisfied only by the completed head of that chain, and the new task inherits the failed task's `dependsOn`. For runs stored before Milestone 2, which have no `retryOf`, successive implementation tasks of a run are read as one retry chain.
+- A dependency is _dead_ when the head of its chain is `failed` or `cancelled` and the orchestrator's policy has chosen not to retry it (the `policy.action` is not `retry`, or the retry limit is exhausted). Only then does every transitive dependent become `cancelled` with `statusReason: "dependency-failed"`. While a retry is still possible, dependents stay `pending`. No dependent starts before its dependencies complete. Re-planning is a new task created through the delegation path below.
 - Edges are validated when a task is created. Every dependency must be an existing task in the same run, and an edge that would create a cycle is rejected before anything is persisted or any event is emitted. Edges are immutable afterwards.
 - **Who may add tasks:** only the orchestrator policy in `HarnessRuntime`, and only after a `delegation` decision from `DecisionGateway` and a policy check against the run limits. A worker, the CLI, or a provider can never create a task. A worker may only request help through the existing `WorkerReport.requestedHelp`, which the orchestrator treats as input to a delegation decision.
 - A `delegation` decision is bounded. Jev chooses among typed options: a task kind, an agent from the configured registry, an access mode, and which existing tasks the new task depends on. It never supplies commands, paths to execute, or free-form instructions that bypass `ContextAssembler`. In deterministic decision mode there is no delegation beyond today's implementation-then-review flow, and the bypass is recorded with `decision.bypassed` as it is today.
@@ -1559,7 +1561,7 @@ The scheduler is a pure function of the task graph, the running set, and the pol
 - **Write tasks** run one at a time per run, each in its own worktree, until reconciliation (#91) exists. Overlapping `access.resources` are therefore not yet arbitrated, but the field is recorded for when more than one writer is allowed.
 - A read task may run beside a running write task only against a stable view: the run's base commit or a completed task's collected worktree. It never reads a worktree that a running writer is mutating.
 - `limits.maxTasks` caps the tasks a run may create. Its default preserves current behavior. `maxSteps`, `maxWorkerCalls`, and the token and time limits keep their current meaning.
-- **Pause** stops new tasks from starting and lets running calls end under the existing pause semantics. **Cancel** aborts every running call and cancels all non-terminal tasks with `statusReason: "run-cancelled"`.
+- **Pause** keeps today's semantics: it aborts every running worker call, as a pause does for the single call now, starts no new task, and moves the run to `paused`. A call interrupted this way is recorded the way an interrupted call is today, and resume applies the existing resume rules to each task. **Cancel** aborts every running call and cancels all non-terminal tasks with `statusReason: "run-cancelled"`.
 - **Checkpoint.** `RunCheckpoint` version 1 holds a single in-flight task. It becomes version 2, which records one in-flight entry per running task. The existing rule holds: a worker call recorded in flight is never started again on resume. A version 1 checkpoint loads as a graph of the tasks it already references.
 
 ##### Workspace lifecycle
@@ -1570,7 +1572,7 @@ Each editing task owns one Git worktree, managed through the `git` CLI as a conf
 created -> baselined -> active -> collected -> reconciled | discarded -> removed
 ```
 
-1. **Create.** `git worktree add` on a task branch `harness/<runId>/<taskId>`, from the run's base commit, under a harness-owned directory inside the existing gitignored `.harness` directory.
+1. **Create.** `git worktree add` on a task branch `harness/<runId>/task-<N>`, from the run's base commit, under a harness-owned directory inside the existing gitignored `.harness` directory. Canonical task IDs have the form `<runId>:task:<N>` and contain `:`, which Git refs forbid, so only the branch and directory component is derived: `task-<N>`, where `<N>` is the task's per-run number. Run IDs are `run-` followed by a UUID or a hash and are Git-safe, and `<N>` is unique within a run, so the derived name cannot collide. An ID not in that form is encoded by replacing every character outside `[A-Za-z0-9._-]` with `-` and appending `-` and the first 8 hex characters of the SHA-256 of the canonical ID. Events and storage always carry the canonical task ID, and `workspace.created` records the branch actually used.
 2. **Baseline.** Capture `GitState` in the new worktree before the worker call. The existing clean-tree requirement applies per worktree.
 3. **Active.** `WorkerRequest.workspace` is the worktree path. Verification for the task runs in that worktree.
 4. **Collect.** Record the evidence as today (`GitEvidence`, diff, files changed) plus the task branch head. Collection changes nothing in the base workspace.
@@ -1591,8 +1593,8 @@ interface AgentHandoff {
   runId: RunId;
   fromTaskId: TaskId;
   toTaskId: TaskId;
-  /** The state chunks the receiving task may see. Chunk content stays in the StateStore. */
-  chunkIds: StateChunkId[];
+  /** The state chunks the receiving task may see, each with the most it may see of it. Content stays in the StateStore. */
+  chunks: Array<{ chunkId: StateChunkId; visibility: ContextVisibility }>;
   reasonCodes: string[];
   decisionId: DecisionId;
   createdAt: string;
@@ -1600,7 +1602,7 @@ interface AgentHandoff {
 ```
 
 - Only the orchestrator creates a handoff, after a `handoff` decision from `DecisionGateway`. The decision selects which candidate chunks pass on and at what visibility. It does not write content.
-- The receiving task builds its context through `ContextAssembler` with the handoff's `chunkIds` as `candidateChunkIds`. The assembly record, selected chunks, visibility, and rendered content hash are stored as for any other context.
+- The receiving task builds its context through `ContextAssembler`. The handoff's chunk IDs become `candidateChunkIds`, and `ContextAssemblyRequest` gains an optional `visibilityCeiling: Record<StateChunkId, ContextVisibility>` built from the handoff. The assembler may choose any visibility up to the ceiling for a chunk, never above it, and never includes a chunk outside the candidates. Visibility is ordered `hidden < short < long < full`. The assembly record, selected chunks with their final visibility, and rendered content hash are stored as for any other context, so the ceiling is auditable.
 - A handoff is also stored as a `handoff` state chunk, an additive `StateChunkType`. Its content is the record above, and it stays bounded in size.
 - A handoff requires `toTaskId` to depend on `fromTaskId`, so a handoff can never create a cycle or let a task start before its source finished.
 
