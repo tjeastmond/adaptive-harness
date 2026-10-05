@@ -1,3 +1,5 @@
+import { accessSync, constants } from "node:fs";
+import { resolve } from "node:path";
 import { isTerminalStatus } from "@adaptive-harness/core";
 import type { CliRuntime } from "./runtime.ts";
 
@@ -37,6 +39,20 @@ async function capture(command: string[], cwd?: string): Promise<{ code: number;
   }
 }
 
+/** Resolves a verification command the way the verifier runs it: in the workspace, with the command's environment. */
+function resolveExecutable(command: string, workspace: string, env: Record<string, string>): string | null {
+  if (command.includes("/")) {
+    const path = resolve(workspace, command);
+    try {
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch {
+      return null;
+    }
+  }
+  return Bun.which(command, { cwd: workspace, PATH: env.PATH ?? process.env.PATH ?? "" });
+}
+
 /** Git added `worktree` in 2.5 and `list --porcelain` in 2.7. */
 export function gitSupportsWorktrees(versionOutput: string): boolean {
   const match = /(\d+)\.(\d+)/.exec(versionOutput);
@@ -59,9 +75,10 @@ export function parseWorktrees(porcelain: string): Array<{ path: string; branch?
   return entries;
 }
 
-async function harnessWorktrees(session: CliRuntime, workspace: string): Promise<HarnessWorktree[]> {
+/** Returns undefined when Git cannot inspect the workspace. */
+async function harnessWorktrees(session: CliRuntime, workspace: string): Promise<HarnessWorktree[] | undefined> {
   const listed = await capture(["git", "-C", workspace, "worktree", "list", "--porcelain"]);
-  if (listed.code !== 0) return [];
+  if (listed.code !== 0) return undefined;
   const found: HarnessWorktree[] = [];
   // The first entry is the main checkout.
   for (const entry of parseWorktrees(listed.stdout).slice(1)) {
@@ -94,7 +111,8 @@ export async function runDoctor(session: CliRuntime): Promise<DoctorReport> {
     checks.push({ name, required, ok, detail });
 
   for (const check of await session.preflight()) {
-    const isJev = check.name === "jev";
+    // Identify the decision provider by kind; worker providers can be named anything.
+    const isJev = check.kind === "jev";
     // Deterministic mode bypasses Jev, so an unreachable Jev only blocks Jev-driven runs.
     const required = !isJev || session.decisionMode === "jev";
     add(
@@ -135,13 +153,17 @@ export async function runDoctor(session: CliRuntime): Promise<DoctorReport> {
   add("limits:coherent", false, incoherent.length === 0, incoherent.join("; ") || "ok");
 
   for (const command of config.verification.commands) {
-    const path = Bun.which(command.command);
-    add(`verification:${command.name}`, true, path !== null, path ?? `${command.command} not found on PATH`);
+    const path = resolveExecutable(command.command, config.project.workspace, command.env);
+    add(`verification:${command.name}`, true, path !== null, path ?? `${command.command} not found`);
   }
 
   const worktrees = await harnessWorktrees(session, config.project.workspace);
-  const stale = worktrees.filter((worktree) => worktree.stale).length;
-  add("worktrees:stale", false, stale === 0, `${worktrees.length} harness worktree(s), ${stale} stale`);
+  if (!worktrees) {
+    add("worktrees:inspect", true, false, `git cannot list worktrees in ${config.project.workspace}`);
+  } else {
+    const stale = worktrees.filter((worktree) => worktree.stale).length;
+    add("worktrees:stale", false, stale === 0, `${worktrees.length} harness worktree(s), ${stale} stale`);
+  }
 
-  return { ok: checks.every((check) => check.ok || !check.required), checks, worktrees };
+  return { ok: checks.every((check) => check.ok || !check.required), checks, worktrees: worktrees ?? [] };
 }

@@ -343,9 +343,14 @@ test("doctor reports readiness, missing verification tools and stale harness wor
     configPath,
     source.replace(
       "commands: []",
-      "commands:\n    - name: missing\n      command: harness-no-such-tool\n      args: []\n    - name: present\n      command: git\n      args: [--version]",
+      "commands:\n    - name: missing\n      command: harness-no-such-tool\n      args: []\n    - name: present\n      command: git\n      args: [--version]\n    - name: local\n      command: ./check.sh\n      args: []\n    - name: envpath\n      command: harness-env-tool\n      args: []\n      env:\n        PATH: " +
+        root +
+        "/bin",
     ),
   );
+  writeFileSync(join(workspace, "check.sh"), "#!/bin/sh\n", { mode: 0o755 });
+  Bun.spawnSync(["mkdir", join(root, "bin")]);
+  writeFileSync(join(root, "bin", "harness-env-tool"), "#!/bin/sh\n", { mode: 0o755 });
   const overrides = { jev: fakeJev([]), workers: { fake: new FakeWorker() } };
 
   const blocked = await cli(["doctor", "--config", configPath, "--json"], overrides);
@@ -357,6 +362,8 @@ test("doctor reports readiness, missing verification tools and stale harness wor
   expect(byName["routing:agents"]).toMatchObject({ ok: true });
   expect(byName["verification:missing"]).toMatchObject({ ok: false, required: true });
   expect(byName["verification:present"]).toMatchObject({ ok: true });
+  expect(byName["verification:local"]).toMatchObject({ ok: true });
+  expect(byName["verification:envpath"]).toMatchObject({ ok: true });
   expect(byName["worktrees:stale"]).toMatchObject({ ok: false, required: false });
   expect(report.worktrees).toEqual([
     expect.objectContaining({
@@ -397,6 +404,30 @@ test("doctor fails when a provider is not ready and tolerates Jev being absent i
   expect(deterministic.stdout).toContain("decision:mode\tok\tdeterministic");
   expect(deterministic.stdout).toContain("decision:jev\twarning");
   expect(deterministic.code).toBe(0);
+});
+
+test("doctor fails when git cannot inspect the workspace and does not trust a worker named jev", async () => {
+  const { configPath, workspace } = fixture();
+  const source = await Bun.file(configPath).text();
+  const renamed = source.replaceAll("fake", "jev");
+  writeFileSync(configPath, renamed);
+  const broken: WorkerAdapter = {
+    ...new FakeWorker(),
+    kind: "codex-cli",
+    preflight: async () => ({ ok: false, details: ["not logged in"] }),
+    cancel: async () => {},
+  };
+  const overrides = { workers: { jev: broken } };
+  const deterministic = { HARNESS_DECISION_MODE: "deterministic" };
+  const worker = await cli(["doctor", "--config", configPath], overrides, deterministic);
+  expect(worker.code).toBe(1);
+  expect(worker.stdout).toContain("provider:jev\tfailed\tnot logged in");
+
+  writeFileSync(configPath, source);
+  rmSync(join(workspace, ".git"), { recursive: true });
+  const noGit = await cli(["doctor", "--config", configPath], { workers: { fake: new FakeWorker() } }, deterministic);
+  expect(noGit.code).toBe(1);
+  expect(noGit.stdout).toContain("worktrees:inspect\tfailed");
 });
 
 test("only commands that change run state recover interrupted runs", async () => {
