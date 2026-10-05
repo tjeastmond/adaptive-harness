@@ -343,11 +343,12 @@ test("doctor reports readiness, missing verification tools and stale harness wor
     configPath,
     source.replace(
       "commands: []",
-      "commands:\n    - name: missing\n      command: harness-no-such-tool\n      args: []\n    - name: present\n      command: git\n      args: [--version]\n    - name: local\n      command: ./check.sh\n      args: []\n    - name: envpath\n      command: harness-env-tool\n      args: []\n      env:\n        PATH: " +
+      "commands:\n    - name: missing\n      command: harness-no-such-tool\n      args: []\n    - name: present\n      command: git\n      args: [--version]\n    - name: dir\n      command: ./bin\n      args: []\n    - name: local\n      command: ./check.sh\n      args: []\n    - name: envpath\n      command: harness-env-tool\n      args: []\n      env:\n        PATH: " +
         root +
         "/bin",
     ),
   );
+  Bun.spawnSync(["mkdir", join(workspace, "bin")]);
   writeFileSync(join(workspace, "check.sh"), "#!/bin/sh\n", { mode: 0o755 });
   Bun.spawnSync(["mkdir", join(root, "bin")]);
   writeFileSync(join(root, "bin", "harness-env-tool"), "#!/bin/sh\n", { mode: 0o755 });
@@ -363,6 +364,7 @@ test("doctor reports readiness, missing verification tools and stale harness wor
   expect(byName["verification:missing"]).toMatchObject({ ok: false, required: true });
   expect(byName["verification:present"]).toMatchObject({ ok: true });
   expect(byName["verification:local"]).toMatchObject({ ok: true });
+  expect(byName["verification:dir"]).toMatchObject({ ok: false });
   expect(byName["verification:envpath"]).toMatchObject({ ok: true });
   expect(byName["worktrees:stale"]).toMatchObject({ ok: false, required: false });
   expect(report.worktrees).toEqual([

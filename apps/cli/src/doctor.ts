@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { isTerminalStatus } from "@adaptive-harness/core";
 import type { CliRuntime } from "./runtime.ts";
@@ -45,7 +45,7 @@ function resolveExecutable(command: string, workspace: string, env: Record<strin
     const path = resolve(workspace, command);
     try {
       accessSync(path, constants.X_OK);
-      return path;
+      return statSync(path).isFile() ? path : null;
     } catch {
       return null;
     }
