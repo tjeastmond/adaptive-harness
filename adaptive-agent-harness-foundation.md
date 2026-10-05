@@ -1534,25 +1534,14 @@ A run owns a directed acyclic graph of `HarnessTask`s.
 ```ts
 interface HarnessTask {
   // ...existing fields...
-  /** Tasks that must be `completed` before this one may start. Fixed at creation. */
+  /** Tasks that must be satisfied before this one may start. Fixed at creation. */
   dependsOn?: TaskId[];
-  /** The previous attempt this task retries, whether that attempt failed or completed. Absent on a first attempt. */
-  retryOf?: TaskId;
-  /** The orchestrator's final disposition of this attempt. Absent while undecided, including while a person's approval is pending. */
-  resolution?: "accepted" | "superseded" | "abandoned";
-  status: "pending" | "running" | "completed" | "failed" | "paused" | "cancelled";
-  /** Set when status is `cancelled` or `failed`, e.g. "dependency-failed", "run-cancelled", "budget". */
-  statusReason?: string;
 }
 ```
 
 - `parentTaskId` stays provenance: which task caused this one to exist. It is not a dependency. A review task today has `parentTaskId` set to its implementation task; Milestone 2 also gives it `dependsOn: [implementationTaskId]`. A task absent from `dependsOn` runs independently of its parent.
-- Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` dependency is _satisfied_ (defined below). `completed`, `failed`, and `cancelled` are terminal.
-- A task is `failed` as soon as one worker call on it does not succeed, as today. A successful call marks the task `completed` before verification, as today, so `completed` does not yet mean the work is accepted.
-- **Retry chains.** A retry creates a new task with the next ID and an incremented `attempt`, as today, whether the previous attempt failed or completed (a completed attempt can be retried after failed verification or because more work is useful). The new task carries `retryOf: <previous TaskId>` and inherits that task's `dependsOn`. A retry always continues the implementation chain: when a review asks for more edits, the retry's `retryOf` is the chain's current implementation head, never the review task, so it inherits the implementation's dependencies and reuses its worktree. The review task is not part of the chain; it keeps its own outcome and `dependsOn` the attempt it reviewed. The `retryOf` links form a chain whose _head_ is its newest task. A dependency on any task in a chain refers to the chain's head.
-- **Resolution.** After verification and the completion decision, the orchestrator sets the head's `resolution` from the resulting `policy.action`: `retry` marks it `superseded`; `fail` marks it `abandoned`; `ask-user` leaves it unset until a person answers, and the answer then resolves it as one of the existing outcomes (an approved `retry` is `superseded`, a chosen `fail` is `abandoned`, anything else is `accepted`); every other action marks it `accepted`. A superseded predecessor keeps its own `completed` or `failed` status. A head already marked `accepted` (the completion decision chose `review`) becomes `superseded` when a review's follow-up creates its retry; an `accepted` head changes resolution only in two ways: to `superseded` when a retry is created, or to `abandoned` when a later effective `fail` action ends the run. An `ask-user` after a review does not clear acceptance: the head stays `accepted` while the pending approval blocks work through the run-level rule below, and the person's answer then applies by the same two changes, or changes nothing. Dependents that are still `pending` then wait on the new head; dependents already running or finished are unaffected. **Review tasks.** A review that completes is `accepted` at once, whatever it found: its findings are delivered, and any follow-up is decided on the implementation chain (a `retry` there supersedes the implementation head, as above). A dependency on a review therefore means only "wait for the review to finish". A task that needs the reviewed work depends on the implementation chain, whose head is unresolved while a retry is pending. A review that fails is handled by the policy action: `review` creates a replacement review with `retryOf` set to the failed one, which becomes `superseded`; `retry` continues the implementation chain. A failed review left without a successor when its implementation chain reaches a final resolution becomes `abandoned`, because it never delivered findings, so its dependents are cancelled with `statusReason: "dependency-failed"`.
-- **Satisfied and dead dependencies.** A dependency is _satisfied_ when its chain's head is `completed` and `accepted`. It is _dead_ when the head is `abandoned`, or `failed` and `accepted` (a person chose `done` after a failed call, which finishes the run without the task's output), whatever its other status: a task that completed but failed verification and ended in `fail` is dead, as is a failed task the policy gave up on. Cancelling a task sets its `resolution` to `abandoned`. A dependency whose head is unresolved is neither: its dependents stay `pending`, which keeps them waiting through a pending approval and through a retry. Only a dead dependency makes every transitive dependent `cancelled` with `statusReason: "dependency-failed"`. Re-planning is a new task created through the delegation path below.
-- For runs stored before Milestone 2, which have no `retryOf` or `resolution`, successive implementation tasks of a run are read as one retry chain, and `resolution` is derived from the stored events and checkpoint, never from the task's status alone. The fold is ordered: for each task, the first `policy.action` event after its `worker.completed` event gives the outcome by the rule above, and each later effective `policy.action` is then applied to the current implementation head by the same rules, so a `retry` after a review supersedes the accepted head, a later `fail` abandons it, and an `ask-user` leaves it `accepted` until an answer applies, including the effective `policy.action` event that follows an `approval.answered` event after an `ask-user`: the answer is applied through the same limits check as any action, so `approval.answered` alone never resolves a task. A head that has never been resolved and has no such event, is still awaiting an answer, or has a checkpoint `answered` with no following `policy.action`, is unresolved; a head already resolved by an earlier action keeps that resolution. This keeps a run that was checkpointed awaiting verification, a completion decision, or a person's approval unresolved, and it resumes under the existing resume rules.
+- Readiness is derived, never stored: a task is _ready_ when it is `pending` and every `dependsOn` dependency is _satisfied_. Task statuses are today's; this issue adds none.
+- **Deferred to #87.** Retry linkage (`retryOf`), the orchestrator's final disposition of a task (`resolution`), the exact meaning of a _satisfied_ or _dead_ dependency, a `cancelled` status and dependency-failure propagation, how legacy runs derive these from stored events, and how task outcomes aggregate into the run's terminal status. These interact (retries, reviews, approvals, failed calls, and budgets), so #87 defines them together with a pure scheduler and tests for every task kind and outcome, rather than as prose here. Until #87 lands, the single implementation-then-review flow is the only graph a run builds, with the review depending on its implementation, and runs behave as they do today.
 - Edges are validated when a task is created. Every dependency must be an existing task in the same run, and an edge that would create a cycle is rejected before anything is persisted or any event is emitted. Edges are immutable afterwards.
 - **Who may add tasks:** only the orchestrator policy in `HarnessRuntime`, and only after a `delegation` decision from `DecisionGateway` and a policy check against the run limits. A worker, the CLI, or a provider can never create a task. A worker may only request help through the existing `WorkerReport.requestedHelp`, which the orchestrator treats as input to a delegation decision.
 - A `delegation` decision is bounded. Jev chooses among typed options: a task kind, an agent from the configured registry, an access mode, and which existing tasks the new task depends on. It never supplies commands, paths to execute, or free-form instructions that bypass `ContextAssembler`. In deterministic decision mode there is no delegation beyond today's implementation-then-review flow, and the bypass is recorded with `decision.bypassed` as it is today.
@@ -1566,12 +1555,12 @@ The scheduler is a pure function of the task graph, the running set, and the pol
 - **Write tasks** run one at a time per run, each in its own worktree, until reconciliation (#91) exists. Overlapping `access.resources` are therefore not yet arbitrated, but the field is recorded for when more than one writer is allowed.
 - A read task may run beside a running write task only against a stable view: the run's base commit or a completed task's collected worktree. It never reads a worktree that a running writer is mutating.
 - `limits.maxTasks` caps the tasks a run may create. Its default preserves current behavior. `maxSteps`, `maxWorkerCalls`, and the token and time limits keep their current meaning.
-- **Pause** keeps today's semantics: it aborts every running worker call, as a pause does for the single call now, starts no new task, and moves the run to `paused`. A call interrupted this way is recorded the way an interrupted call is today, and resume applies the existing resume rules to each task. **Cancel** aborts every running call and cancels all non-terminal tasks with `statusReason: "run-cancelled"`.
+- **Pause** keeps today's semantics: it aborts every running worker call, as a pause does for the single call now, starts no new task, and moves the run to `paused`. A call interrupted this way is recorded the way an interrupted call is today, and resume applies the existing resume rules to each task. Cancel semantics for a graph are part of #87.
 - **Checkpoint.** `RunCheckpoint` version 1 holds a single in-flight task. It becomes version 2, which records one in-flight entry per running task. The existing rule holds: a worker call recorded in flight is never started again on resume. A version 1 checkpoint loads as a graph of the tasks it already references.
 
 ##### Workspace lifecycle
 
-Each chain of editing attempts (the retry chain above) owns one Git worktree, managed through the `git` CLI as a configured capability, not a Git library.
+Each chain of editing attempts (a task and its retries; their linkage is defined in #87) owns one Git worktree, managed through the `git` CLI as a configured capability, not a Git library.
 
 ```text
 created -> baselined -> active -> collected -> reconciled | discarded -> removed
@@ -1615,23 +1604,20 @@ interface AgentHandoff {
 
 New event types are additive within envelope `version: 1`. No existing payload changes shape. Every new payload carries a top-level `runId`, because the store checks it against the envelope. Consumers must ignore event types they do not recognize; the CLI and eval runner already select events by `type`. A breaking change to an existing payload is the only reason to bump the envelope version.
 
-| Event                 | Payload                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| `task.created`        | `runId`, `task`                                                                             |
-| `task.status-changed` | `runId`, `taskId`, `from`, `to`, `reason?`                                                  |
-| `task.resolved`       | `runId`, `taskId`, `resolution`                                                             |
-| `handoff.created`     | `runId`, `handoff`                                                                          |
-| `workspace.created`   | `runId`, `taskId`, `path`, `branch`, `baseCommit` (once per retry chain, by its first task) |
-| `workspace.collected` | `runId`, `taskId`, `headCommit`, `filesChanged`                                             |
-| `workspace.removed`   | `runId`, `taskId`, `reason`                                                                 |
+| Event                 | Payload                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| `task.created`        | `runId`, `task`                                                                                 |
+| `task.status-changed` | `runId`, `taskId`, `from`, `to`, `reason?`                                                      |
+| `handoff.created`     | `runId`, `handoff`                                                                              |
+| `workspace.created`   | `runId`, `taskId`, `path`, `branch`, `baseCommit` (once per task and its retries, by the first) |
+| `workspace.collected` | `runId`, `taskId`, `headCommit`, `filesChanged`                                                 |
+| `workspace.removed`   | `runId`, `taskId`, `reason`                                                                     |
 
 `workspace.reconciled` is reserved for #91 and defined there.
 
-- Replay folds `task.created`, `task.status-changed`, and `task.resolved` into the graph. For a run stored before Milestone 2, which has no task events, the graph is derived from the `tasks` table: each review task depends on the implementation task named by its `parentTaskId`.
+- Replay folds `task.created` and `task.status-changed` into the graph. #87 adds any further task events. For a run stored before Milestone 2, which has no task events, the graph is derived from the `tasks` table: each review task depends on the implementation task named by its `parentTaskId`.
 - Persistence stores edges in a `task_dependencies(run_id, task_id, depends_on_task_id)` table added by migration 4, with foreign keys to `tasks(id, run_id)`. `HarnessTask.dependsOn` is the read model. The existing `events` table constraint `version = 1` is unchanged.
-- The `run.status-changed` event is unchanged, and the run keeps a single coarse status. With several active tasks the status is derived by this precedence: `verifying` while any task is in verification, otherwise `running` while any non-review task is running (a write task or a read-only research or architecture task, as today), otherwise `reviewing` while only review tasks are active. The run state machine gains exactly two transitions, `running -> reviewing` (the last non-review task finishes while a review continues) and `reviewing -> running` (a non-review task starts while a review continues). Every other transition, including `verifying -> running`, `verifying -> reviewing`, and `running -> verifying`, already exists. The implementing issue adds both transitions with tests.
-
-- **Run completion.** The run keeps today's single terminal status, derived from the graph. The run is `completed` only when every chain head is `accepted`, no approval is pending, and no task is `pending`, ready, or running. The one exempt head is a failed review abandoned by the fallback above, which does not block completion by itself; if tasks were cancelled because of it, completion is blocked and the run asks the user, who can choose `done` or `fail` as in today's approvals. Choosing `done` waives every head cancelled by that review's failure at once: the effective `policy.action` event carries one reason code `waived:<taskId>` per waived head, replay treats those heads as waived, and they no longer block completion; a `done` action on one task resolves that task and no longer completes the run by itself. A `fail` action on any chain head fails the run: in-flight calls are aborted, every non-terminal task is `cancelled`, and the run becomes `failed`, which keeps today's single-task behavior. A refinement that lets a failed read-only task fail only its dependents is out of scope. While an approval is pending, no new task starts and running tasks finish; the run then waits for the answer. Budget exhaustion keeps today's policy: it forbids starting more work and aborts in-flight calls, but a `done` or `ask-user` outcome is preserved rather than converted to `fail`; only a request for further work becomes `fail`, through the path above.
+- The `run.status-changed` event is unchanged. How the run's single coarse status derives from several active tasks, including any new state-machine transitions, is part of #87.
 
 ##### Budgets with concurrent calls
 
@@ -1652,7 +1638,7 @@ Budgets stay run-level. The run budget is the only authority, and per-task usage
 
 ##### Follow-up issue order
 
-1. #87 Task graph and scheduler (depends on this section).
+1. #87 Task graph and scheduler, including retry linkage, task resolution, dependency satisfaction and failure, run-status aggregation, and legacy replay (depends on this section).
 2. #88 Worktree per editing task (depends on #87).
 3. #89 Parallel read-only tasks (depends on #87; needs #88 to review an isolated writer).
 4. #90 Handoffs (depends on #87).
