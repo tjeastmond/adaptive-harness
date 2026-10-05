@@ -56,6 +56,21 @@ Do not implement advanced dynamic tool loading, broad parallel write execution, 
 - Treat provider output and stored raw events as untrusted input, redact secrets, and preserve bounded event/context retention.
 - Update the foundation document only when an accepted decision changes a contract.
 
+## Using Jev with Claude
+
+This section directs Claude sessions (see the `typesafe:typesafe-ai` skill for Jev's API and question design). Its purpose is to spend fewer Claude tokens without lowering quality: Jev picks the cheapest sufficient profile, and the host enforces it.
+
+1. **Ask Jev once per task, before starting work.** No Jev connector or MCP server is installed, so call the HTTP API described by the `typesafe-ai` skill directly with `curl`. Send one Choice question over the task description (goal, issue number, rough file count) to `https://api.typesafe.ai/v1/systemone` with model `jev-latest`, using `TYPESAFE_API_KEY` from the gitignored `.env.local`. Load the key into the shell without printing it and never put it in output, commits, or issues. Ask "Which host-approved profile is the cheapest one that will complete the task at good quality?" with these options:
+   - `single-medium`: one Sonnet 5.5 session at medium effort. A clear, well-scoped coding or docs change touching a few files.
+   - `single-high`: one Sonnet 5.5 session at high effort. Ambiguous design, subtle debugging, contract changes, or JSON/schema-heavy work.
+   - `lead-plus-subagent`: the lead session plus one Sonnet 5.5 medium-effort implementation subagent in a worktree. A substantial multi-file change with a clear spec, as in the task workflow below.
+2. **The host checks and applies the answer.** Accept only a profile named above. If Jev errors, returns anything else, or has confidence below 0.6 (a provisional threshold; adjust it from observed results), use `single-medium`. Set the model when starting any subagent (the Agent tool's `model` parameter) and keep it fixed for that session. Effort cannot be set per subagent from within a session. Apply it only where the host exposes it, and say so instead of claiming it was applied. Jev never changes permissions or approvals.
+3. **Do not ask again mid-task.** Re-ask only if the task's scope changes materially, such as a clear fix turning into a contract change.
+4. **A second Claude is for the `lead-plus-subagent` profile, or for independent research or a review the user requested.** Dr. Nit reviews go through Codex, not a second Claude. Give it the task, the specific files and issue excerpts it needs, its limits, and its completion requirements, not the whole conversation. It returns a short summary of findings and evidence, not transcripts or file dumps.
+5. **Scope.** Do not add features, documentation, refactors, or extra review rounds beyond the task. The tests, Dr. Nit reviews, and fix-and-rereview rounds this guide requires are part of the task. Ask the user only when you cannot continue without input or before an action that needs approval, including a merge whose conditions are unmet.
+6. **Completion check.** Before reporting completion, run `bun run validate`. For a change it does not cover, such as docs only, run the closest relevant check. If no check can run, say which one and why. When the work is done and checked, stop and report the result.
+7. **Track evidence.** Whether this saves tokens and time is unproven, so append one row per task to `.agents/jev-log.md` (create it with a header on first use) and commit it with the task's PR. Columns: date, issue or PR, profile Jev chose, confidence, whether the fallback was used, wall-clock minutes from the Jev call to the completion check, `bun run validate` runs, Dr. Nit rounds, token use if the session reports it, and a short note on whether the profile fit. Record only what was observed. Leave a column blank rather than estimating it. Review the log with TJ after about ten tasks and adjust the profiles and the confidence threshold from it.
+
 ## Claude-specific rules
 
 These rules apply to Claude agent sessions (Claude Code in the terminal or the Claude desktop app), not to this project's `apps/cli`. A pattern-based `pkill` run by a Claude agent once terminated every application on the user's machine.
