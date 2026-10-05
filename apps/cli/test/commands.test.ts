@@ -391,6 +391,18 @@ test("doctor reports readiness, missing verification tools and stale harness wor
   expect(stale.stdout).toContain("worktree\tstale\t");
 });
 
+test("doctor finds a harness worktree whose path contains a newline", async () => {
+  const { configPath, workspace, root } = fixture();
+  git(workspace, "worktree", "add", "-q", "--detach", join(root, "repo", "odd\n", ".harness", "tree"));
+  const result = await cli(["doctor", "--config", configPath, "--json"], {
+    jev: fakeJev([]),
+    workers: { fake: new FakeWorker() },
+  });
+  expect(JSON.parse(result.stdout).worktrees).toEqual([
+    expect.objectContaining({ path: expect.stringContaining("odd\n/.harness/tree"), stale: true }),
+  ]);
+});
+
 test("doctor fails when a provider is not ready and tolerates Jev being absent in deterministic mode", async () => {
   const { configPath } = fixture();
   const broken: WorkerAdapter = {

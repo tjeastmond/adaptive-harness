@@ -62,31 +62,30 @@ function resolveExecutable(command: string, workspace: string, env: Record<strin
   return Bun.which(command, { cwd: workspace, PATH: env.PATH ?? process.env.PATH ?? "" });
 }
 
-/** Git added `worktree` in 2.5 and `list --porcelain` in 2.7. */
+/** `git worktree list -z`, which keeps unusual paths intact, needs Git 2.36. */
 export function gitSupportsWorktrees(versionOutput: string): boolean {
   const match = /(\d+)\.(\d+)/.exec(versionOutput);
   if (!match) return false;
   const [major, minor] = [Number(match[1]), Number(match[2])];
-  return major > 2 || (major === 2 && minor >= 7);
+  return major > 2 || (major === 2 && minor >= 36);
 }
 
+/** Parses `git worktree list --porcelain -z`: NUL-terminated fields, so paths may contain newlines. */
 export function parseWorktrees(porcelain: string): Array<{ path: string; branch?: string }> {
   const entries: Array<{ path: string; branch?: string }> = [];
-  for (const block of porcelain.split(/\n\n+/)) {
-    let path: string | undefined;
-    let branch: string | undefined;
-    for (const row of block.split("\n")) {
-      if (row.startsWith("worktree ")) path = row.slice("worktree ".length);
-      else if (row.startsWith("branch ")) branch = row.slice("branch ".length);
-    }
-    if (path) entries.push({ path, ...(branch === undefined ? {} : { branch }) });
+  let current: { path: string; branch?: string } | undefined;
+  for (const field of porcelain.split("\0")) {
+    if (field.startsWith("worktree ")) {
+      current = { path: field.slice("worktree ".length) };
+      entries.push(current);
+    } else if (current && field.startsWith("branch ")) current.branch = field.slice("branch ".length);
   }
   return entries;
 }
 
 /** Returns undefined when Git cannot inspect the workspace. */
 async function harnessWorktrees(session: CliRuntime, workspace: string): Promise<HarnessWorktree[] | undefined> {
-  const listed = await capture(["git", "-C", workspace, "worktree", "list", "--porcelain"]);
+  const listed = await capture(["git", "-C", workspace, "worktree", "list", "--porcelain", "-z"]);
   if (listed.code !== 0) return undefined;
   const found: HarnessWorktree[] = [];
   // The first entry is the main checkout.
