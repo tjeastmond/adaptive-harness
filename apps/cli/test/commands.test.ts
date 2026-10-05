@@ -415,6 +415,9 @@ test("doctor fails when git cannot inspect the workspace and does not trust a wo
     ...new FakeWorker(),
     kind: "codex-cli",
     preflight: async () => ({ ok: false, details: ["not logged in"] }),
+    execute: async () => {
+      throw new Error("doctor must not run a worker");
+    },
     cancel: async () => {},
   };
   const overrides = { workers: { jev: broken } };
