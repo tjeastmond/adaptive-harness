@@ -1554,6 +1554,8 @@ The scheduler is a pure function of the task graph, the running set, and the pol
 - **Read tasks** may run in parallel, up to `limits.maxConcurrentReadTasks`. The default is `1`, so behavior is unchanged until #89 raises it.
 - **Write tasks** run one at a time per run, each in its own worktree, until reconciliation (#91) exists. Overlapping `access.resources` are therefore not yet arbitrated, but the field is recorded for when more than one writer is allowed.
 - A read task may run beside a running write task only against a stable view: the run's base commit or a completed task's collected worktree. It never reads a worktree that a running writer is mutating.
+- `limits.maxDelegationDepth` (default `2`) caps how deep a delegation chain may go. A task the run creates at start has depth 0; a task created by a `delegation` decision made while handling a task has that task's depth plus one. A delegation that would exceed the limit is refused by policy before anything is persisted, as with `maxTasks`.
+- **Limits are per run.** `maxTasks`, `maxConcurrentReadTasks`, and `maxDelegationDepth` are read from `limits` in the harness config. The config path for a per-agent override is reserved: `agents.<name>.limits.<same key>`, which will be additive, may only lower the run's value, and is not implemented in Milestone 2. The config schema must stay open to it, so adding it does not change the meaning of the per-run keys.
 - `limits.maxTasks` caps the tasks a run may create. Its default preserves current behavior. `maxSteps`, `maxWorkerCalls`, and the token and time limits keep their current meaning.
 - **Pause** keeps today's semantics: it aborts every running worker call, as a pause does for the single call now, starts no new task, and moves the run to `paused`. A call interrupted this way is recorded the way an interrupted call is today, and resume applies the existing resume rules to each task. Cancel semantics for a graph are part of #87.
 - **Checkpoint.** `RunCheckpoint` version 1 holds a single in-flight task. It becomes version 2, which records one in-flight entry per running task. The existing rule holds: a worker call recorded in flight is never started again on resume. A version 1 checkpoint loads as a graph of the tasks it already references.
@@ -1646,11 +1648,11 @@ Budgets stay run-level. The run budget is the only authority, and per-task usage
 6. #92 Event stream (after #87, #88, and #90 define their events).
 7. #93 Health checks (independent; may run in parallel with any of the above).
 
-##### Open questions for TJ
+##### Decisions from TJ
 
-- Is `.harness/worktrees/<runId>/<taskId>` the right location, or should worktrees live beside the repository?
-- Should a delegation chain have a depth limit, in addition to `maxTasks`?
-- Should `maxTasks` and `maxConcurrentReadTasks` be configurable per agent, or only per run?
+- Worktrees live at `.harness/worktrees/<runId>/<taskId>` inside the repository, in the existing gitignored `.harness` directory. `harness doctor` already inspects `.harness` paths.
+- Delegation chains have a depth limit, `limits.maxDelegationDepth`, defaulting to `2`.
+- `maxTasks` and `maxConcurrentReadTasks` are per run for now, and the per-agent config path is reserved (see Scheduling).
 
 ### Milestone 3: Local daemon and control plane
 
