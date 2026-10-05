@@ -29,9 +29,18 @@ export interface DoctorReport {
 
 const BRANCH = /^refs\/heads\/harness\/([^/]+)\/task-\d+$/;
 
+/** Git overrides such as GIT_DIR take precedence over `git -C`, so they must not reach the inspection. */
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+
 async function capture(command: string[], cwd?: string): Promise<{ code: number; stdout: string }> {
   try {
-    const proc = Bun.spawn(command, { ...(cwd ? { cwd } : {}), stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const proc = Bun.spawn(command, {
+      ...(cwd ? { cwd } : {}),
+      env: cleanEnv(),
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
     const stdout = await new Response(proc.stdout).text();
     return { code: await proc.exited, stdout };
   } catch {

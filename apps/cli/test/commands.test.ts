@@ -377,7 +377,15 @@ test("doctor reports readiness, missing verification tools and stale harness wor
   ]);
 
   writeFileSync(configPath, source);
-  const stale = await cli(["doctor", "--config", configPath], overrides);
+  const previous = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(root, "nonexistent.git");
+  let stale: Awaited<ReturnType<typeof cli>>;
+  try {
+    stale = await cli(["doctor", "--config", configPath], overrides);
+  } finally {
+    if (previous === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = previous;
+  }
   expect(stale.code).toBe(0);
   expect(stale.stdout).toContain("worktrees:stale\twarning\t1 harness worktree(s), 1 stale");
   expect(stale.stdout).toContain("worktree\tstale\t");
