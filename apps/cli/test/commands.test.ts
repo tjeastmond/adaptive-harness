@@ -334,6 +334,71 @@ test("agents list and providers doctor report configuration and preflight", asyn
   expect(JSON.parse(unkeyed.stdout)[0]).toMatchObject({ name: "jev", ok: false });
 });
 
+test("doctor reports readiness, missing verification tools and stale harness worktrees", async () => {
+  const { configPath, workspace, root } = fixture();
+  const kept = join(root, "repo", ".harness", "worktrees", "kept");
+  git(workspace, "worktree", "add", "-q", "-b", "harness/run-gone/task-1", kept);
+  const source = await Bun.file(configPath).text();
+  writeFileSync(
+    configPath,
+    source.replace(
+      "commands: []",
+      "commands:\n    - name: missing\n      command: harness-no-such-tool\n      args: []\n    - name: present\n      command: git\n      args: [--version]",
+    ),
+  );
+  const overrides = { jev: fakeJev([]), workers: { fake: new FakeWorker() } };
+
+  const blocked = await cli(["doctor", "--config", configPath, "--json"], overrides);
+  expect(blocked.code).toBe(1);
+  const report = JSON.parse(blocked.stdout);
+  const byName = Object.fromEntries(report.checks.map((check: { name: string }) => [check.name, check]));
+  expect(byName["provider:fake"]).toMatchObject({ ok: true, required: true });
+  expect(byName["git:worktree"]).toMatchObject({ ok: true });
+  expect(byName["routing:agents"]).toMatchObject({ ok: true });
+  expect(byName["verification:missing"]).toMatchObject({ ok: false, required: true });
+  expect(byName["verification:present"]).toMatchObject({ ok: true });
+  expect(byName["worktrees:stale"]).toMatchObject({ ok: false, required: false });
+  expect(report.worktrees).toEqual([
+    expect.objectContaining({
+      runId: "run-gone",
+      runStatus: "unknown",
+      stale: true,
+      branch: "harness/run-gone/task-1",
+    }),
+  ]);
+
+  writeFileSync(configPath, source);
+  const stale = await cli(["doctor", "--config", configPath], overrides);
+  expect(stale.code).toBe(0);
+  expect(stale.stdout).toContain("worktrees:stale\twarning\t1 harness worktree(s), 1 stale");
+  expect(stale.stdout).toContain("worktree\tstale\t");
+});
+
+test("doctor fails when a provider is not ready and tolerates Jev being absent in deterministic mode", async () => {
+  const { configPath } = fixture();
+  const broken: WorkerAdapter = {
+    ...new FakeWorker(),
+    kind: "codex-cli",
+    preflight: async () => ({ ok: false, details: ["not logged in"] }),
+    execute: async () => {
+      throw new Error("doctor must not run a worker");
+    },
+    cancel: async () => {},
+  };
+  const failed = await cli(["doctor", "--config", configPath], { jev: fakeJev([]), workers: { fake: broken } });
+  expect(failed.code).toBe(1);
+  expect(failed.stdout).toContain("provider:fake\tfailed\tnot logged in");
+
+  const deterministic = await cli(
+    ["doctor", "--config", configPath],
+    { workers: { fake: new FakeWorker() } },
+    { HARNESS_DECISION_MODE: "deterministic" },
+  );
+  expect(deterministic.stdout).toContain("decision:mode\tok\tdeterministic");
+  expect(deterministic.stdout).toContain("decision:jev\twarning");
+  expect(deterministic.code).toBe(0);
+});
+
 test("only commands that change run state recover interrupted runs", async () => {
   const { configPath } = fixture();
   let recoveries = 0;

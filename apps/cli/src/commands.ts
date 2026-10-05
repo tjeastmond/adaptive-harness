@@ -1,6 +1,7 @@
 import { loadHarnessConfig } from "@adaptive-harness/config";
 import type { HarnessRun, RunId, RunPlan } from "@adaptive-harness/core";
 import type { ApprovalRequest, EventEnvelope, HarnessEvent } from "@adaptive-harness/protocol";
+import { runDoctor } from "./doctor.ts";
 import { nonnegativeInteger, type ParsedOptions, parseOptions } from "./options.ts";
 import type { CliRuntime, OpenRuntime } from "./runtime.ts";
 
@@ -374,6 +375,39 @@ export async function providersCommand(args: string[], context: CommandContext):
           ),
         );
     return checks.every((check) => check.ok) ? 0 : 1;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  } finally {
+    session?.close();
+  }
+}
+
+export async function doctorCommand(args: string[], context: CommandContext): Promise<number> {
+  const options = parseOptions(args, { values: ["config"], flags: ["json"] });
+  if ("error" in options) return usage(options.error);
+  if (options.positional.length) return usage("Usage: harness doctor [--config path] [--json]");
+  let session: CliRuntime | undefined;
+  try {
+    const configPath = options.values.get("config");
+    session = await context.openRuntime({
+      ...(configPath === undefined ? {} : { configPath }),
+      requireDecisions: false,
+      env: context.env,
+    });
+    const report = await runDoctor(session);
+    if (options.flags.has("json")) console.log(JSON.stringify(report, null, 2));
+    else {
+      for (const check of report.checks)
+        console.log(
+          [check.name, check.ok ? "ok" : check.required ? "failed" : "warning", clip(check.detail)].join("\t"),
+        );
+      for (const tree of report.worktrees)
+        console.log(
+          ["worktree", tree.stale ? "stale" : "active", tree.path, tree.runId ?? "", tree.runStatus].join("\t"),
+        );
+    }
+    return report.ok ? 0 : 1;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;
