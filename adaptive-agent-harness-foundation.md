@@ -1571,7 +1571,7 @@ created -> baselined -> active -> collected -> reconciled | discarded -> removed
 3. **Active.** `WorkerRequest.workspace` is the worktree path, for every attempt in the chain. Verification runs in that worktree.
 4. **Collect.** After each attempt, record the evidence as today (`GitEvidence`, diff, files changed) plus the branch head. Collection changes nothing in the base workspace.
 5. **Reconcile or discard.** The chain's final accepted state is what is reconciled. Integrating the chain's branch into the base branch is the job of #91 and requires a person's approval. Discarding requires approval when the branch has uncommitted changes or commits that are not integrated.
-6. **Remove.** Only after reconcile or discard. Remove the worktree without `--force`. A worktree that is not clean, or that holds unintegrated commits, is kept and reported. A run that ends with unreconciled worktrees leaves them in place and lists them.
+6. **Remove.** Only after reconcile or discard. Remove the worktree without `--force`. A worktree that is not clean, or that holds unintegrated commits, is kept and reported unless a person approved discarding exactly that state; after an approved discard the harness cleans the worktree and removes it, still without `--force`. A run that ends with unreconciled worktrees leaves them in place and lists them.
 
 - Read tasks get no worktree of their own. They run read-only against their stable view, enforced by `task.access.mode` as today.
 - The existing safety rule applies to every workspace: stop if a repository changes outside the active worker process.
