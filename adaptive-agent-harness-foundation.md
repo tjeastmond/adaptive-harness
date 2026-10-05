@@ -1650,7 +1650,7 @@ Budgets stay run-level. The run budget is the only authority, and per-task usage
 
 ##### Decisions from TJ
 
-- Worktrees live at `.harness/worktrees/<runId>/<taskId>` inside the repository, in the existing gitignored `.harness` directory. `harness doctor` already inspects `.harness` paths.
+- Worktrees live at `.harness/worktrees/<runId>/task-<N>` inside the repository, in the existing gitignored `.harness` directory, using the derived `task-<N>` component and encoding rule from the Workspace lifecycle. `harness doctor` already inspects `.harness` paths.
 - Delegation chains have a depth limit, `limits.maxDelegationDepth`, defaulting to `2`.
 - `maxTasks` and `maxConcurrentReadTasks` are per run for now, and the per-agent config path is reserved (see Scheduling).
 
